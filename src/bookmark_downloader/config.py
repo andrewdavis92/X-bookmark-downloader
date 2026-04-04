@@ -44,7 +44,7 @@ class Config:
         "state_management": {
             "database_file": "state.db",
             "tracking_method": "local_logging",  # local_logging, bookmark_removal, or hybrid
-            "retention_days": 90,
+            "retention_days": -1,  # -1 for unlimited, positive number for days
         },
         "logging": {
             "level": "INFO",
@@ -61,7 +61,7 @@ class Config:
         """Initialize configuration.
 
         Args:
-            config_file: Path to config.yaml or config.json. If None, searches for config files.
+            config_file: Path to config.yaml or config.yml. If None, searches for config files.
         """
         self.config: Dict[str, Any] = self._load_config(config_file)
         self._validate_config()
@@ -71,7 +71,7 @@ class Config:
 
         Priority order:
         1. Hardcoded defaults
-        2. Config file (YAML or JSON)
+        2. Config file (YAML)
         3. .env file
         4. Environment variables
         """
@@ -85,8 +85,8 @@ class Config:
         if config_file:
             config = self._load_config_file(config_file, config)
         else:
-            # Try to find config.yaml or config.json
-            for filename in ["config.yaml", "config.yml", "config.json"]:
+            # Try to find config.yaml or config.yml
+            for filename in ["config.yaml", "config.yml"]:
                 if Path(filename).exists():
                     config = self._load_config_file(filename, config)
                     break
@@ -100,7 +100,7 @@ class Config:
     def _load_config_file(
         filepath: str, base_config: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Load configuration from YAML or JSON file."""
+        """Load configuration from YAML file."""
         path = Path(filepath)
 
         if not path.exists():
@@ -110,13 +110,8 @@ class Config:
             if filepath.endswith((".yaml", ".yml")):
                 with open(path, "r") as f:
                     file_config = yaml.safe_load(f) or {}
-            elif filepath.endswith(".json"):
-                import json
-
-                with open(path, "r") as f:
-                    file_config = json.load(f)
             else:
-                raise ValueError(f"Unsupported config file format: {filepath}")
+                raise ValueError(f"Unsupported config file format: {filepath}. Only YAML (.yaml/.yml) is supported.")
 
             # Merge file config with base config (file takes precedence)
             return Config._deep_merge(base_config, file_config)

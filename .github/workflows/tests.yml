@@ -2,7 +2,7 @@ name: Tests
 
 on:
   push:
-    branches: [ main, "claude/**" ]
+    branches: [ main, "claude/**", "feature/**", "bugfix/**" ]
 
 jobs:
   test:
@@ -64,12 +64,22 @@ jobs:
     if: always()
 
     steps:
-    - name: Check test results
+    - name: Test Results Summary
       run: |
-        if [ "${{ needs.test.result }}" == "failure" ]; then
-          echo "Tests failed!"
-          exit 1
+        echo "## Test Results Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        if [ "${{ needs.test.result }}" == "success" ]; then
+          echo "✅ **All tests passed!**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Python 3.9 ✓" >> $GITHUB_STEP_SUMMARY
+          echo "- Python 3.10 ✓" >> $GITHUB_STEP_SUMMARY
+          echo "- Python 3.11 ✓" >> $GITHUB_STEP_SUMMARY
+          echo "- Python 3.12 ✓" >> $GITHUB_STEP_SUMMARY
         else
-          echo "All tests passed!"
+          echo "❌ **Tests failed - please review logs above**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the test output above for details on which tests failed." >> $GITHUB_STEP_SUMMARY
+          exit 1
         fi
 

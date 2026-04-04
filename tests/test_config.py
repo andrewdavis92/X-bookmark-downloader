@@ -69,41 +69,6 @@ download:
             os.chdir(original_cwd)
 
 
-class TestConfigJSONLoading:
-    """Test JSON configuration loading."""
-
-    def test_load_json_config(self, sample_config_json, clean_env):
-        """Test loading JSON configuration file."""
-        original_cwd = os.getcwd()
-        try:
-            os.chdir(sample_config_json.parent)
-            config = Config(str(sample_config_json))
-
-            assert config["twitter"]["bearer_token"] == "test_bearer_token_json"
-            assert config["download"]["max_workers"] == 4
-            assert config["logging"]["level"] == "INFO"
-        finally:
-            os.chdir(original_cwd)
-
-    def test_json_overrides_defaults(self, temp_dir, clean_env):
-        """Test that JSON config overrides defaults."""
-        config_file = temp_dir / "config.json"
-        config_file.write_text("""{
-  "twitter": {"bearer_token": "json_token"},
-  "download": {"max_workers": 12}
-}""")
-
-        original_cwd = os.getcwd()
-        try:
-            os.chdir(temp_dir)
-            config = Config(str(config_file))
-
-            assert config["download"]["max_workers"] == 12
-            assert config["twitter"]["bearer_token"] == "json_token"
-        finally:
-            os.chdir(original_cwd)
-
-
 class TestConfigEnvironmentVariables:
     """Test environment variable override support."""
 

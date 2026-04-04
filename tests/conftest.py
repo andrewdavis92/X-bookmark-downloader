@@ -43,7 +43,7 @@ processing:
 state_management:
   database_file: state.db
   tracking_method: local_logging
-  retention_days: 90
+  retention_days: -1
 
 logging:
   level: INFO
@@ -54,50 +54,6 @@ logging:
 quarantine:
   folder: quarantine
 """
-    config_file.write_text(config_content)
-    return config_file
-
-
-@pytest.fixture
-def sample_config_json(temp_dir) -> Path:
-    """Create a sample JSON configuration file."""
-    config_file = temp_dir / "config.json"
-    config_content = """{
-  "twitter": {
-    "bearer_token": "test_bearer_token_json",
-    "request_timeout": 30
-  },
-  "paths": {
-    "downloads_directory": "~/Documents/X-Bookmarks",
-    "logs_directory": "~/Library/Logs/bookmark-downloader"
-  },
-  "download": {
-    "image_quality": "high",
-    "video_quality": "best",
-    "max_workers": 4,
-    "timeout_seconds": 600,
-    "retry_attempts": 3
-  },
-  "processing": {
-    "follow_quotes": true,
-    "max_quote_depth": 1,
-    "batch_size": 100
-  },
-  "state_management": {
-    "database_file": "state.db",
-    "tracking_method": "local_logging",
-    "retention_days": 90
-  },
-  "logging": {
-    "level": "INFO",
-    "filename": "bookmark_downloader.log",
-    "max_bytes": 10485760,
-    "backup_count": 5
-  },
-  "quarantine": {
-    "folder": "quarantine"
-  }
-}"""
     config_file.write_text(config_content)
     return config_file
 
