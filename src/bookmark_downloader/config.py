@@ -132,7 +132,7 @@ class Config:
         1. BOOKMARK_DOWNLOADER_SECTION_KEY (e.g., BOOKMARK_DOWNLOADER_TWITTER_BEARER_TOKEN)
         2. Direct variables from .env (e.g., TWITTER_BEARER_TOKEN)
         """
-        env_config = {}
+        env_config: Dict[str, Any] = {}
 
         # First, handle BOOKMARK_DOWNLOADER_ prefixed variables
         for key, value in os.environ.items():
