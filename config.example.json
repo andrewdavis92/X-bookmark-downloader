@@ -1,0 +1,36 @@
+{
+  "twitter": {
+    "bearer_token": "${TWITTER_BEARER_TOKEN}",
+    "request_timeout": 30
+  },
+  "paths": {
+    "downloads_directory": "~/Documents/X-Bookmarks",
+    "logs_directory": "~/Library/Logs/bookmark-downloader"
+  },
+  "download": {
+    "image_quality": "high",
+    "video_quality": "best",
+    "max_workers": 4,
+    "timeout_seconds": 600,
+    "retry_attempts": 3
+  },
+  "processing": {
+    "follow_quotes": true,
+    "max_quote_depth": 1,
+    "batch_size": 100
+  },
+  "state_management": {
+    "database_file": "state.db",
+    "tracking_method": "local_logging",
+    "retention_days": 90
+  },
+  "logging": {
+    "level": "INFO",
+    "filename": "bookmark_downloader.log",
+    "max_bytes": 10485760,
+    "backup_count": 5
+  },
+  "quarantine": {
+    "folder": "quarantine"
+  }
+}

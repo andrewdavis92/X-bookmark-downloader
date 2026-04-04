@@ -1,0 +1,108 @@
+# X Bookmark Downloader - Configuration File (YAML)
+# Copy this file to config.yaml and customize for your environment
+
+# =============================================================================
+# Twitter API Configuration
+# =============================================================================
+twitter:
+  # Bearer token for X API v2 (get from https://developer.twitter.com)
+  # Can also be set via TWITTER_BEARER_TOKEN env variable
+  bearer_token: ${TWITTER_BEARER_TOKEN}
+
+  # API request timeout in seconds
+  request_timeout: 30
+
+# =============================================================================
+# Paths Configuration
+# =============================================================================
+paths:
+  # Directory where bookmarks will be downloaded and organized
+  # All media organized as: @username/post_id_media.ext
+  # Supports: ~/path (home), ./path (relative), /absolute/path
+  downloads_directory: ~/Documents/X-Bookmarks
+
+  # Directory for logs, state database, and quarantine data
+  # Supports: ~/path (home), ./path (relative), /absolute/path
+  logs_directory: ~/Library/Logs/bookmark-downloader
+
+# =============================================================================
+# Download Settings
+# =============================================================================
+download:
+  # Image quality preference: high, medium, low
+  image_quality: high
+
+  # Video quality preference: best, 720p, 480p, etc.
+  # 'best' = highest available (slower, larger files)
+  video_quality: best
+
+  # Number of parallel download workers
+  max_workers: 4
+
+  # Timeout for individual downloads in seconds
+  timeout_seconds: 600
+
+  # Number of retry attempts for failed downloads
+  retry_attempts: 3
+
+# =============================================================================
+# Processing Settings
+# =============================================================================
+processing:
+  # Whether to follow and download quoted posts
+  follow_quotes: true
+
+  # Maximum quote depth (1 = immediate quotes only)
+  max_quote_depth: 1
+
+  # Process bookmarks in batches of this size
+  batch_size: 100
+
+# =============================================================================
+# State Management
+# =============================================================================
+state_management:
+  # Database filename (stored in logs_directory)
+  database_file: state.db
+
+  # How to track processed bookmarks:
+  #   local_logging: Keep bookmarks, track in local database (safe, default)
+  #   bookmark_removal: Remove from bookmarks after successful download
+  #   hybrid: Mark for removal, requires manual confirmation
+  tracking_method: local_logging
+
+  # How many days to keep processing history
+  retention_days: 90
+
+# =============================================================================
+# Logging
+# =============================================================================
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: INFO
+
+  # Log filename (stored in logs_directory)
+  filename: bookmark_downloader.log
+
+  # Maximum log file size before rotation (bytes)
+  # 10MB = 10485760
+  max_bytes: 10485760
+
+  # Number of backup log files to keep
+  backup_count: 5
+
+# =============================================================================
+# Quarantine Settings
+# =============================================================================
+quarantine:
+  # Folder name for failed items (stored in logs_directory)
+  folder: quarantine
+
+# =============================================================================
+# Notes:
+# - All settings have sensible defaults; modify only what you need
+# - Paths support: ~/user/home, ./relative, /absolute/paths
+# - Environment variables can override any setting
+#   Format: BOOKMARK_DOWNLOADER_SECTION_KEY
+#   Example: BOOKMARK_DOWNLOADER_DOWNLOAD_MAX_WORKERS=8
+# =============================================================================
