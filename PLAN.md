@@ -319,34 +319,39 @@ coordinate_downloads(media_list) -> DownloadStats
 
 ### Phase 5: Quote Post Handling
 **Duration:** 2-3 hours  
-**Deliverables:** Quote resolver with symlink creation
+**Deliverables:** Quote resolver, quote metadata, symlink coordination
 
 **Tasks:**
 - [ ] Implement quote_resolver.py:
   - Detect quoted tweets in API response
   - Fetch quoted tweet details (one level only)
-  - Extract quoted post media
-  - Return quote metadata
+  - Extract quoted post media information
+  - Return quote metadata (post_id, author, media count)
   
-- [ ] Implement symlink creation:
-  - Check if quoted post already exists (by tweet_id)
-  - Create relative symlink from parent post to quoted post
-  - Handle existing quoted posts (skip if already processed)
-  - Handle quote deletion edge case
+- [ ] Return quote information to main processor:
+  - Pass quoted post data to storage manager
+  - Coordinate with symlink creation in Phase 6
+  - Handle quote deletion edge case (log warning, continue)
 
 **Key Methods:**
 ```python
-resolve_quoted_post(tweet_id) -> Optional[QuotedPost]
-create_symlink(source_path, target_path) -> bool
-get_quote_metadata(tweet_data) -> QuoteMetadata
+resolve_quoted_post(tweet_id, api_client) -> Optional[QuotedPost]
+get_quote_metadata(tweet_data) -> Dict {
+    'quoted_post_id': str,
+    'quoted_author': str,
+    'quoted_text': str,
+    'media_count': int
+}
 ```
 
-**Link Structure:**
-```
-@username_1/1234567890_post/
-├── tweet.txt
-├── media_1.jpg
-└── quoted_post_link -> ../../@username_2/9876543210_post/
+**Data Structure:**
+```python
+QuotedPost = {
+    'post_id': '9876543210',
+    'author': '@username_2',
+    'text': 'quoted content...',
+    'media_urls': [...]
+}
 ```
 
 **Dependencies:** Phase 2 (API), Phase 4 (media)
@@ -355,30 +360,44 @@ get_quote_metadata(tweet_data) -> QuoteMetadata
 
 ### Phase 6: Local Storage & File Organization
 **Duration:** 2-3 hours  
-**Deliverables:** File system organization, directory creation
+**Deliverables:** File system organization, directory creation, symlinks
 
 **Tasks:**
 - [ ] Implement local_storage.py:
-  - Create directory structure (by username → post ID)
+  - Create author directories (by username)
   - Sanitize usernames for filesystem (non-ASCII handling)
-  - Generate media filenames
+  - Generate media filenames with post_id prefix
   - Write post content as .txt files
   - Create author-level metadata files
+  - Create symlinks for quoted posts
 
 - [ ] Implement post text storage:
-  - Format: Author, date, URL, content
+  - Format: Author, date, URL, content, media list
   - Handle very long text (> 65KB)
   - Proper encoding (UTF-8)
-  - Quoted post references in text
+  - Include media references and quoted post info
+
+- [ ] Implement quoted post symlink creation:
+  - Create symlinks from parent post to quoted post media
+  - Handle multiple media items in quoted posts
+  - Symlink naming: `quoted_link_{parent_id}_to_{quoted_id}`
 
 **Key Methods:**
 ```python
 get_author_folder(username: str) -> Path
-get_post_folder(username: str, post_id: str) -> Path
+get_post_text_path(username: str, post_id: str) -> Path
 get_media_path(username: str, post_id: str, index: int, ext: str) -> Path
-ensure_directory_structure(username: str, post_id: str) -> Path
-save_post_content(post_folder: Path, post_data: Dict) -> None
-create_metadata_file(folder: Path, metadata: Dict) -> None
+# Returns: /path/to/@username/1234567890_1.jpg
+ensure_author_directory(username: str) -> Path
+save_post_content(author_folder: Path, post_id: str, post_data: Dict) -> None
+create_symlink_to_quoted(
+    parent_username: str, 
+    parent_post_id: str, 
+    quoted_username: str, 
+    quoted_post_id: str,
+    media_index: Optional[int] = None
+) -> None
+create_metadata_file(author_folder: Path, metadata: Dict) -> None
 ```
 
 **Dependencies:** Phase 1 (config), Phase 3 (state)
@@ -678,7 +697,7 @@ quarantine:
 ### Post Text Storage
 
 **File:** `{post_id}.txt`  
-**Location:** `{username}/{post_id_folder}/`
+**Location:** `{username}/{post_id}.txt`
 
 **Format:**
 ```
@@ -690,11 +709,19 @@ URL: https://x.com/username/status/1234567890
 
 ---
 Metrics: 1.2K Likes, 342 Retweets, 89 Replies
+
+Media: 3 items
+  - 1234567890_1.jpg
+  - 1234567890_2.mp4
+  - 1234567890_3.gif
+
+Quoted Tweet: 9876543210 by @other_user
 ---
 [Optional: Quoted tweet information if present]
 Quote Author: @other_user
 Quote Posted: 2024-04-04 12:00:00 UTC
 Quote Text: [quoted content]
+Quote Media: 9876543210_1.jpg (symlinked as quoted_link_1234567890_to_9876543210)
 ```
 
 ---
@@ -706,21 +733,21 @@ Quote Text: [quoted content]
 ```
 ~/Documents/X-Bookmarks/
 ├── @username_1/
-│   ├── 1234567890_post/
-│   │   ├── tweet.txt                    # Post content
-│   │   ├── media_1.jpg                  # First image
-│   │   ├── media_2.mp4                  # First video
-│   │   ├── media_3.gif                  # Animated GIF
-│   │   └── quoted_post_link -> ../../@username_2/9876543210_post/
-│   ├── 1234567891_post/
-│   │   └── tweet.txt                    # No media, text only
+│   ├── 1234567890.txt                   # Post content
+│   ├── 1234567890_1.jpg                 # First image
+│   ├── 1234567890_2.mp4                 # First video
+│   ├── 1234567890_3.gif                 # Animated GIF
+│   ├── 1234567891.txt                   # Post with no media
+│   ├── 1234567892.txt
+│   ├── 1234567892_1.jpg
+│   ├── quoted_link_1234567890_to_9876543210 -> ../../../@username_2/9876543210_1.jpg
 │   ├── _metadata.json                   # Author statistics
 │   └── ...
 │
 ├── @username_2/
-│   ├── 9876543210_post/
-│   │   ├── tweet.txt
-│   │   └── media_1.jpg                  # Quoted post media
+│   ├── 9876543210.txt                   # Quoted post content
+│   ├── 9876543210_1.jpg                 # Quoted post media
+│   ├── _metadata.json
 │   └── ...
 │
 └── _processing_summary.json             # Overall statistics
@@ -728,25 +755,41 @@ Quote Text: [quoted content]
 
 ### Filename Conventions
 
-- **Post folders:** `{post_id}_post` or `{post_id}`
-- **Media files:** `media_1.jpg`, `media_2.mp4`, etc. (1-indexed)
-- **Text files:** `tweet.txt` (consistent naming)
-- **Quoted references:** Symlink named `quoted_post_link`
+- **Post text files:** `{post_id}.txt` (e.g., `1234567890.txt`)
+- **Media files:** `{post_id}_{index}.{ext}` (e.g., `1234567890_1.jpg`, `1234567890_2.mp4`)
+- **Media index:** 1-indexed, sequential (1, 2, 3...)
+- **Quoted post symlinks:** `quoted_link_{parent_id}_to_{quoted_id}` → points to quoted post media
 - **Metadata:** `_metadata.json` (prefixed with underscore)
 
-### Symlink Structure
+### Symlink Structure for Quoted Posts
 
-**From parent post to quoted post:**
+**From parent post to quoted post media:**
 ```
-@user1/1234567890_post/quoted_post_link -> ../../@user2/9876543210_post/
+@user1/quoted_link_1234567890_to_9876543210 -> ../../../@user2/9876543210_1.jpg
+```
+
+**Or for quoted post text:**
+```
+@user1/quoted_link_1234567890_to_9876543210_txt -> ../../../@user2/9876543210.txt
+```
+
+**Example with multiple quoted media:**
+```
+@user1/
+├── 1234567890.txt              # Parent post
+├── 1234567890_1.jpg            # Parent media
+├── quoted_link_1234567890_to_9876543210 -> ../../../@user2/9876543210_1.jpg
+└── quoted_link_1234567890_to_9876543210_2 -> ../../../@user2/9876543210_2.jpg
 ```
 
 **Advantages:**
-- All content from same author grouped together
+- Flat file structure - easier to browse
+- All content from same author in one directory
+- Symlinks maintain relationships between posts
 - OS-native shortcuts (work in Finder, CLI)
-- Bidirectional navigation possible
-- No file duplication
-- Easy to understand relationships
+- No duplication of files
+- Easy to understand naming: post_id indicates which post files belong to
+- Clear quoted post references via symlink names
 
 ---
 
