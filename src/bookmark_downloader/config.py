@@ -78,10 +78,8 @@ class Config:
         # Start with defaults
         config = self._deep_copy(self.DEFAULTS)
 
-        # Load .env file if it exists
-        env_file = Path(".env")
-        if env_file.exists():
-            load_dotenv(env_file)
+        # Load .env file if it exists (searches up directory tree)
+        load_dotenv()
 
         # Load config file
         if config_file:
@@ -130,28 +128,34 @@ class Config:
     def _load_env_vars(config: Dict[str, Any]) -> Dict[str, Any]:
         """Load configuration from environment variables.
 
-        Environment variable format: BOOKMARK_DOWNLOADER_SECTION_KEY
-        Example: BOOKMARK_DOWNLOADER_TWITTER_BEARER_TOKEN
+        Supports two formats:
+        1. BOOKMARK_DOWNLOADER_SECTION_KEY (e.g., BOOKMARK_DOWNLOADER_TWITTER_BEARER_TOKEN)
+        2. Direct variables from .env (e.g., TWITTER_BEARER_TOKEN)
         """
         env_config = {}
 
+        # First, handle BOOKMARK_DOWNLOADER_ prefixed variables
         for key, value in os.environ.items():
-            if not key.startswith("BOOKMARK_DOWNLOADER_"):
-                continue
+            if key.startswith("BOOKMARK_DOWNLOADER_"):
+                # Remove prefix and convert to lowercase
+                parts = key.replace("BOOKMARK_DOWNLOADER_", "").lower().split("_")
 
-            # Remove prefix and convert to lowercase
-            parts = key.replace("BOOKMARK_DOWNLOADER_", "").lower().split("_")
+                # Build nested dict structure
+                if len(parts) >= 2:
+                    section = parts[0]
+                    key_name = "_".join(parts[1:])
 
-            # Build nested dict structure
-            if len(parts) >= 2:
-                section = parts[0]
-                key_name = "_".join(parts[1:])
+                    if section not in env_config:
+                        env_config[section] = {}
 
-                if section not in env_config:
-                    env_config[section] = {}
+                    # Try to convert value to appropriate type
+                    env_config[section][key_name] = Config._parse_env_value(value)
 
-                # Try to convert value to appropriate type
-                env_config[section][key_name] = Config._parse_env_value(value)
+        # Also check for direct environment variables from .env
+        if "TWITTER_BEARER_TOKEN" in os.environ:
+            if "twitter" not in env_config:
+                env_config["twitter"] = {}
+            env_config["twitter"]["bearer_token"] = os.environ["TWITTER_BEARER_TOKEN"]
 
         return Config._deep_merge(config, env_config)
 
