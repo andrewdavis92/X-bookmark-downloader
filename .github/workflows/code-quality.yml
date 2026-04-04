@@ -1,0 +1,71 @@
+name: Code Quality
+
+on:
+  push:
+    branches: [ main, "claude/**" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install black flake8 mypy isort
+
+    - name: Check code formatting with black
+      run: |
+        black src/ tests/ --check --diff --line-length=100
+      continue-on-error: true
+
+    - name: Check import sorting with isort
+      run: |
+        isort src/ tests/ --check-only --diff
+      continue-on-error: true
+
+    - name: Lint with flake8
+      run: |
+        flake8 src/bookmark_downloader tests/ --max-line-length=100 --statistics
+      continue-on-error: true
+
+    - name: Type check with mypy
+      run: |
+        mypy src/bookmark_downloader --ignore-missing-imports
+      continue-on-error: true
+
+  security:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install bandit safety
+
+    - name: Check for security issues with bandit
+      run: |
+        bandit -r src/bookmark_downloader --skip B101,B601 -f json -o bandit-report.json || true
+      continue-on-error: true
+
+    - name: Check for vulnerable dependencies
+      run: |
+        safety check --json || true
+      continue-on-error: true
