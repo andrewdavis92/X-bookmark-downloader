@@ -386,8 +386,11 @@ QuotedPost = {
 ```python
 get_author_folder(username: str) -> Path
 get_post_text_path(username: str, post_id: str) -> Path
+# Returns: /path/to/@username/1234567890.txt
 get_media_path(username: str, post_id: str, index: int, ext: str) -> Path
 # Returns: /path/to/@username/1234567890_1.jpg
+get_quoted_link_path(username: str, post_id: str, quote_index: int) -> Path
+# Returns: /path/to/@username/1234567890_quoted_1.link
 ensure_author_directory(username: str) -> Path
 save_post_content(author_folder: Path, post_id: str, post_data: Dict) -> None
 create_symlink_to_quoted(
@@ -395,8 +398,9 @@ create_symlink_to_quoted(
     parent_post_id: str, 
     quoted_username: str, 
     quoted_post_id: str,
-    media_index: Optional[int] = None
+    quote_index: int
 ) -> None
+# Creates: {parent_post_id}_quoted_{quote_index}.link -> quoted media
 create_metadata_file(author_folder: Path, metadata: Dict) -> None
 ```
 
@@ -716,12 +720,13 @@ Media: 3 items
   - 1234567890_3.gif
 
 Quoted Tweet: 9876543210 by @other_user
+Symlink: 1234567890_quoted_1.link -> ../../../@other_user/9876543210_1.jpg
 ---
 [Optional: Quoted tweet information if present]
 Quote Author: @other_user
 Quote Posted: 2024-04-04 12:00:00 UTC
 Quote Text: [quoted content]
-Quote Media: 9876543210_1.jpg (symlinked as quoted_link_1234567890_to_9876543210)
+Quote Media: 9876543210_1.jpg (accessible via 1234567890_quoted_1.link)
 ```
 
 ---
@@ -735,18 +740,20 @@ Quote Media: 9876543210_1.jpg (symlinked as quoted_link_1234567890_to_9876543210
 ├── @username_1/
 │   ├── 1234567890.txt                   # Post content
 │   ├── 1234567890_1.jpg                 # First image
-│   ├── 1234567890_2.mp4                 # First video
-│   ├── 1234567890_3.gif                 # Animated GIF
+│   ├── 1234567890_2.mp4                 # Second media (video)
+│   ├── 1234567890_quoted_1.link         # Symlink to quoted post media
 │   ├── 1234567891.txt                   # Post with no media
 │   ├── 1234567892.txt
 │   ├── 1234567892_1.jpg
-│   ├── quoted_link_1234567890_to_9876543210 -> ../../../@username_2/9876543210_1.jpg
+│   ├── 1234567892_quoted_1.link         # Symlink to its quoted post
+│   ├── 1234567892_quoted_2.link         # Multiple quoted media
 │   ├── _metadata.json                   # Author statistics
 │   └── ...
 │
 ├── @username_2/
-│   ├── 9876543210.txt                   # Quoted post content
-│   ├── 9876543210_1.jpg                 # Quoted post media
+│   ├── 9876543210.txt                   # Post content (may be quoted by others)
+│   ├── 9876543210_1.jpg
+│   ├── 9876543210_2.jpg
 │   ├── _metadata.json
 │   └── ...
 │
@@ -758,28 +765,34 @@ Quote Media: 9876543210_1.jpg (symlinked as quoted_link_1234567890_to_9876543210
 - **Post text files:** `{post_id}.txt` (e.g., `1234567890.txt`)
 - **Media files:** `{post_id}_{index}.{ext}` (e.g., `1234567890_1.jpg`, `1234567890_2.mp4`)
 - **Media index:** 1-indexed, sequential (1, 2, 3...)
-- **Quoted post symlinks:** `quoted_link_{parent_id}_to_{quoted_id}` → points to quoted post media
+- **Quoted post symlinks:** `{parent_id}_quoted_{index}.link` → points to quoted post media
+  - Example: `1234567890_quoted_1.link` (first quoted post media)
+  - Example: `1234567890_quoted_2.link` (second quoted post media)
 - **Metadata:** `_metadata.json` (prefixed with underscore)
 
 ### Symlink Structure for Quoted Posts
 
-**From parent post to quoted post media:**
-```
-@user1/quoted_link_1234567890_to_9876543210 -> ../../../@user2/9876543210_1.jpg
-```
-
-**Or for quoted post text:**
-```
-@user1/quoted_link_1234567890_to_9876543210_txt -> ../../../@user2/9876543210.txt
-```
-
-**Example with multiple quoted media:**
+**Symlink naming for easy grouping by post ID:**
 ```
 @user1/
-├── 1234567890.txt              # Parent post
-├── 1234567890_1.jpg            # Parent media
-├── quoted_link_1234567890_to_9876543210 -> ../../../@user2/9876543210_1.jpg
-└── quoted_link_1234567890_to_9876543210_2 -> ../../../@user2/9876543210_2.jpg
+├── 1234567890.txt                           # Parent post
+├── 1234567890_1.jpg                         # Parent media
+├── 1234567890_quoted_1.link -> ../../../@user2/9876543210_1.jpg
+└── 1234567890_quoted_2.link -> ../../../@user2/9876543210_2.jpg
+```
+
+**Benefits of this naming:**
+- All files for post `1234567890` group together when sorted
+- Quoted media clearly associated with parent post ID
+- Easy to see at a glance which posts have quotes
+- Sequential indexing (`_quoted_1`, `_quoted_2`) for multiple quoted items
+
+**Alternative with quoted text reference:**
+```
+@user1/
+├── 1234567890.txt                           # Parent post text
+├── 1234567890_quoted.link -> ../../../@user2/9876543210.txt
+└── 1234567890_quoted_1.link -> ../../../@user2/9876543210_1.jpg
 ```
 
 **Advantages:**
