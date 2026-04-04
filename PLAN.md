@@ -148,6 +148,8 @@ X-bookmark-downloader/
 ├── requirements.txt                   # Python dependencies
 ├── setup.py                           # Package configuration
 ├── .env.example                       # Example environment variables
+├── config.example.yaml                # Example YAML configuration
+├── config.example.json                # Example JSON configuration
 ├── .gitignore                         # Git exclusions
 │
 ├── src/
@@ -194,16 +196,14 @@ X-bookmark-downloader/
 │   ├── test_storage.py               # Storage & organization tests
 │   └── test_state.py                 # State management tests
 │
-├── logs/                             # Runtime logs (created at runtime)
-│   └── .gitkeep
-│
-├── downloads/                        # Downloaded media root (created at runtime)
-│   └── .gitkeep
-│
-├── quarantine/                       # Failed items (created at runtime)
-│   └── .gitkeep
-│
-└── state.db                          # SQLite state database (created at runtime)
+└── [Runtime-created directories - configured in config file]
+    ├── logs_directory/               # Logs, state DB, quarantine (configurable)
+    │   ├── bookmark_downloader.log
+    │   ├── state.db
+    │   └── quarantine/
+    └── downloads_directory/          # Downloaded media by creator (configurable)
+        ├── @username_1/
+        └── @username_2/
 ```
 
 ---
@@ -600,7 +600,7 @@ pytest-cov>=4.0.0
 **Loads from (in priority order):**
 1. Environment variables
 2. `.env` file
-3. `config.yaml` file
+3. `config.yaml` file (or `config.json`)
 4. Hardcoded defaults
 
 **Configuration Items:**
@@ -609,8 +609,14 @@ twitter:
   bearer_token: ${TWITTER_BEARER_TOKEN}
   request_timeout: 30
 
+paths:
+  # Downloads directory - stores organized bookmarks by creator
+  downloads_directory: ~/Documents/X-Bookmarks
+  
+  # Logs directory - stores application logs, quarantine data, and state database
+  logs_directory: ~/Library/Logs/bookmark-downloader
+
 download:
-  root_directory: ~/Documents/X-Bookmarks
   image_quality: high
   video_quality: best
   max_workers: 4
@@ -623,16 +629,30 @@ processing:
   batch_size: 100
 
 state_management:
-  database_path: ./state.db
+  # Database file location (can be relative or absolute)
+  database_file: state.db
   tracking_method: local_logging  # or 'bookmark_removal' or 'hybrid'
   retention_days: 90
 
 logging:
   level: INFO
-  file: ./logs/bookmark_downloader.log
+  # Log file path (relative to logs_directory unless absolute path given)
+  filename: bookmark_downloader.log
   max_bytes: 10485760
   backup_count: 5
+  
+quarantine:
+  # Quarantine folder location (relative to logs_directory unless absolute path given)
+  folder: quarantine
 ```
+
+**Path Resolution Rules:**
+- Paths starting with `~/` are expanded to user home directory
+- Paths starting with `./` are relative to config file directory
+- Absolute paths (`/` or drive letter on Windows) are used as-is
+- `logs_directory` is the base for: logs, quarantine data, state database
+- `downloads_directory` is the base for: organized bookmarks by creator
+- All paths are created automatically if they don't exist
 
 ### Media Detection (`media_handler.py`)
 
@@ -924,22 +944,28 @@ python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# 2. Configure credentials
+# 2. Configure credentials and paths
 cp .env.example .env
 # Edit .env with X API credentials
 
-# 3. Verify setup
+# 3. Set up configuration file (choose YAML or JSON)
+cp config.example.yaml config.yaml
+# OR
+cp config.example.json config.json
+# Edit with your desired download and log paths
+
+# 4. Verify setup
 python -m bookmark_downloader verify_setup
 
-# 4. Test run
+# 5. Test run
 python -m bookmark_downloader download --limit 5
 
-# 5. Install scheduler
+# 6. Install scheduler
 mkdir -p ~/Library/LaunchAgents
 cp schedule/com.user.bookmark-downloader.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.user.bookmark-downloader.plist
 
-# 6. Verify installation
+# 7. Verify installation
 launchctl list | grep bookmark-downloader
 ```
 
@@ -1121,6 +1147,183 @@ Testing (Phase 10): Depends on all phases
 - Media deduplication across posts
 - Advanced search/filtering of downloads
 - Integration with media management tools
+
+---
+
+## Configuration Examples
+
+### YAML Configuration (`config.yaml`)
+
+**Minimal Setup (macOS):**
+```yaml
+twitter:
+  bearer_token: ${TWITTER_BEARER_TOKEN}
+
+paths:
+  downloads_directory: ~/Documents/X-Bookmarks
+  logs_directory: ~/Library/Logs/bookmark-downloader
+
+download:
+  video_quality: best
+  max_workers: 4
+
+state_management:
+  tracking_method: local_logging
+```
+
+**Advanced Setup with Custom Paths:**
+```yaml
+twitter:
+  bearer_token: ${TWITTER_BEARER_TOKEN}
+  request_timeout: 30
+
+paths:
+  # Store downloads in an external drive
+  downloads_directory: /Volumes/External-SSD/X-Bookmarks
+  # Store logs locally for quick access
+  logs_directory: ~/.bookmark-downloader/logs
+
+download:
+  image_quality: high
+  video_quality: best
+  max_workers: 4
+  timeout_seconds: 600
+  retry_attempts: 3
+
+processing:
+  follow_quotes: true
+  max_quote_depth: 1
+  batch_size: 100
+
+state_management:
+  database_file: state.db
+  tracking_method: hybrid  # Can switch to 'local_logging' or 'bookmark_removal'
+  retention_days: 90
+
+logging:
+  level: DEBUG
+  filename: bookmark_downloader.log
+  max_bytes: 10485760
+  backup_count: 5
+
+quarantine:
+  folder: quarantine
+```
+
+### JSON Configuration (`config.json`)
+
+**Example with Independent Paths:**
+```json
+{
+  "twitter": {
+    "bearer_token": "${TWITTER_BEARER_TOKEN}",
+    "request_timeout": 30
+  },
+  "paths": {
+    "downloads_directory": "~/Documents/X-Bookmarks",
+    "logs_directory": "~/Library/Logs/bookmark-downloader"
+  },
+  "download": {
+    "image_quality": "high",
+    "video_quality": "best",
+    "max_workers": 4,
+    "timeout_seconds": 600,
+    "retry_attempts": 3
+  },
+  "processing": {
+    "follow_quotes": true,
+    "max_quote_depth": 1,
+    "batch_size": 100
+  },
+  "state_management": {
+    "database_file": "state.db",
+    "tracking_method": "local_logging",
+    "retention_days": 90
+  },
+  "logging": {
+    "level": "INFO",
+    "filename": "bookmark_downloader.log",
+    "max_bytes": 10485760,
+    "backup_count": 5
+  },
+  "quarantine": {
+    "folder": "quarantine"
+  }
+}
+```
+
+### Environment Variables (`.env`)
+
+**Required:**
+```bash
+TWITTER_BEARER_TOKEN=your_bearer_token_here
+```
+
+**Optional (override config file):**
+```bash
+# Paths
+BOOKMARK_DOWNLOADER_DOWNLOADS_DIR=/path/to/downloads
+BOOKMARK_DOWNLOADER_LOGS_DIR=/path/to/logs
+
+# Download settings
+BOOKMARK_DOWNLOADER_MAX_WORKERS=4
+BOOKMARK_DOWNLOADER_VIDEO_QUALITY=best
+
+# Logging
+BOOKMARK_DOWNLOADER_LOG_LEVEL=DEBUG
+
+# State management
+BOOKMARK_DOWNLOADER_TRACKING_METHOD=local_logging
+```
+
+### Configuration Priority
+
+When multiple config sources are present, they're loaded in this order (later overrides earlier):
+
+1. **Hardcoded defaults** (baseline)
+2. **Config file** (`config.yaml` or `config.json`)
+3. **Environment variables** (highest priority - override everything)
+4. **Command-line arguments** (if implemented)
+
+### Path Expansion Examples
+
+```
+Input: ~/Documents/X-Bookmarks
+Result: /Users/username/Documents/X-Bookmarks
+
+Input: ./logs
+Result: /path/to/config/directory/logs
+
+Input: /Volumes/External/Bookmarks
+Result: /Volumes/External/Bookmarks (unchanged)
+
+Input: logs/
+Result: ${LOGS_DIRECTORY}/logs
+```
+
+### Directory Structure After Configuration
+
+If configured as:
+```yaml
+paths:
+  downloads_directory: ~/Documents/X-Bookmarks
+  logs_directory: ~/Library/Logs/bookmark-downloader
+```
+
+Resulting structure:
+```
+~/Documents/X-Bookmarks/
+├── @username_1/
+├── @username_2/
+└── _processing_summary.json
+
+~/Library/Logs/bookmark-downloader/
+├── bookmark_downloader.log
+├── state.db
+└── quarantine/
+    ├── failed_items.json
+    └── 2024-04-04/
+```
 
 ---
 
