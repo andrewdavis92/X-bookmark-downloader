@@ -378,9 +378,9 @@ class BookmarkClient:
         Args:
             config: Configuration dict. If None, loads from config file.
         """
-        from bookmark_downloader.config import load_config
+        from bookmark_downloader.config import get_config
 
-        self.config = config or load_config()
+        self.config = config or get_config()
         auth_manager = AuthManager(self.config)
         access_token = auth_manager.get_access_token()
         self.client = TwitterClient(access_token)

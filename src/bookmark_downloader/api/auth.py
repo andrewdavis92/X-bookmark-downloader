@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
-from bookmark_downloader.config import load_config
+from bookmark_downloader.config import get_config
 from bookmark_downloader.utils.logger import get_logger
 
 from .types import EncryptedToken, OAuthTokenResponse
