@@ -275,9 +275,9 @@ X-bookmark-downloader/
 - [ ] Implement twitter_client.py with:
   - XDK client initialization
   - Bookmark fetching with automatic pagination
-  - Tweet detail expansion (media, quotes, public_metrics)
+  - Tweet detail expansion (media, quotes)
   - Rate limit detection & handling
-  - Error handling & retry logic
+  - Error classification & handling (retriable vs permanent)
 - [ ] Create response parsing utilities:
   - Extract media URLs from tweet data
   - Parse quote post references
@@ -286,6 +286,12 @@ X-bookmark-downloader/
   - Track remaining requests
   - Detect 429 responses
   - Implement wait_for_rate_limit_reset logic
+
+**Error Handling Strategy:**
+- **Retriable Errors** (network timeouts, 429 rate limits, 500/502/503): Retry in current round with exponential backoff, don't mark complete so next run can retry
+- **Permanent Errors** (404 deleted content, 403 access denied, invalid data): Quarantine item for manual review
+- **API Failures** (connection errors, HTTP errors): Log and continue processing
+- **Processing Failures** (missing required fields, malformed data): Raise exceptions to halt and alert
 
 **Key Methods:**
 ```python
