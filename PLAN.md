@@ -263,7 +263,7 @@ X-bookmark-downloader/
 - **Response Types**: TypedDict for main data structures (Tweet, Media, Bookmark, etc.) for type safety and IDE autocomplete
 - **Rate Limit Handling**: Automatic & transparent - client detects rate limits and sleeps until reset, retries automatically
 - **Pagination**: Generator pattern - `get_bookmarks_iter(batch_size=100)` yields batches, handles pagination under the hood, caller controls progress
-- **API Expansions**: Configurable by caller with sensible defaults (author_id, public_metrics, created_at, attachments.media_keys, quote.id for tweets; media.type, media.url, media.alt_text for media)
+- **API Expansions**: Configurable by caller with sensible defaults (author_id, created_at, attachments.media_keys, quote.id for tweets; media.type, media.url, media.alt_text for media)
 
 **Tasks:**
 - [ ] Update requirements.txt: replace tweepy with xdk
@@ -312,10 +312,10 @@ get_rate_limit_status() -> Dict
 **Default Expansions:**
 ```python
 {
-    'expansions': ['author_id', 'public_metrics', 'created_at', 'attachments.media_keys', 'quote.id'],
-    'media_fields': ['type', 'url', 'public_metrics', 'alt_text'],
-    'user_fields': ['username', 'created_at', 'public_metrics'],
-    'tweet_fields': ['text', 'author_id', 'created_at', 'public_metrics', 'attachments']
+    'expansions': ['author_id', 'created_at', 'attachments.media_keys', 'quote.id'],
+    'media_fields': ['type', 'url', 'alt_text'],
+    'user_fields': ['username', 'created_at'],
+    'tweet_fields': ['text', 'author_id', 'created_at', 'attachments']
 }
 ```
 
