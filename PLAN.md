@@ -298,11 +298,16 @@ X-bookmark-downloader/
   - Detect 429 responses
   - Implement wait_for_rate_limit_reset logic
 
-**Error Handling Strategy:**
-- **Retriable Errors** (network timeouts, 429 rate limits, 500/502/503): Retry in current round with exponential backoff, don't mark complete so next run can retry
-- **Permanent Errors** (404 deleted content, 403 access denied, invalid data): Quarantine item for manual review
-- **API Failures** (connection errors, HTTP errors): Log and continue processing
-- **Processing Failures** (missing required fields, malformed data): Raise exceptions to halt and alert
+**Error Handling & Edge Cases:**
+- **Deleted Tweets (404)**: Log warning and continue - nothing recoverable
+- **Protected/Private Content (403)**: Quarantine for review - user might gain access by following author
+- **Text-only Tweets**: Return data and save text in .txt file (same as media posts)
+- **Missing Required Fields**: Raise exception - data integrity issue, don't mark processed, retry later
+- **Rate Limit Hit During Pagination**: Auto-pause, wait for reset, resume transparently
+- **Retriable Errors** (timeouts, 429, 500/502/503): Retry in current round with exponential backoff, don't mark complete so next run can retry
+- **Permanent Errors** (validation failures): Quarantine item for manual review
+- **API Failures** (connection errors): Log and continue processing
+- **Processing Failures** (missing fields, malformed data): Raise exceptions to halt and alert
 
 **Key Methods:**
 ```python
