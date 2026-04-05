@@ -263,15 +263,26 @@ X-bookmark-downloader/
 - **Response Types**: TypedDict for main data structures (Tweet, Media, Bookmark, etc.) for type safety and IDE autocomplete
 - **Rate Limit Handling**: Automatic & transparent - client detects rate limits and sleeps until reset, retries automatically
 - **Pagination**: Generator pattern - `get_bookmarks_iter(batch_size=100)` yields batches, handles pagination under the hood, caller controls progress
-- **API Expansions**: Configurable by caller with sensible defaults (author_id, created_at, attachments.media_keys, quote.id for tweets; media.type, media.url, media.alt_text for media)
+**Credential & Token Management:**
+- **Priority Order**: 
+  1. Check `TWITTER_BEARER_TOKEN` environment variable (bearer token auth)
+  2. Check `TWITTER_CLIENT_ID` environment variable (OAuth flow)
+  3. If neither, exit with clear instructions for OAuth setup
+- **Token Storage**: In state.db with encryption at rest (use cryptography.fernet for AES encryption)
+- **Auto-Storage**: Tokens stored automatically after OAuth, but include `SKIP_TOKEN_STORAGE=true` flag to disable
+- **OAuth Flow**: If using OAuth, provide clear instructions on Client ID registration and redirect URI setup
 
 **Tasks:**
 - [ ] Update requirements.txt: replace tweepy with xdk
+- [ ] Update requirements.txt: add xdk, cryptography (for token encryption)
 - [ ] Implement auth.py with:
-  - OAuth 2.0 PKCE flow using xdk.OAuth2PKCEAuth
+  - Bearer token authentication (priority)
+  - OAuth 2.0 PKCE flow using xdk.OAuth2PKCEAuth (fallback)
   - Local HTTP server on port 8000 for callback handling
-  - Token storage and refresh logic
-  - Credential validation
+  - Token encryption/decryption using cryptography.fernet
+  - Token storage in state.db with optional skip flag
+  - Token refresh logic for expired tokens
+  - Credential validation with helpful error messages
 - [ ] Implement twitter_client.py with:
   - XDK client initialization
   - Bookmark fetching with automatic pagination
