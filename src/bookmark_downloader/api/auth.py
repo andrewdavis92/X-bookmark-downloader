@@ -300,7 +300,7 @@ class TokenStore:
         expires_in: int = 7200,
     ) -> None:
         """
-        Store OAuth token in database.
+        Store OAuth token in database (encrypted).
 
         Args:
             access_token: The access token.
@@ -311,6 +311,12 @@ class TokenStore:
 
         expires_at = int(time.time()) + expires_in
 
+        # Encrypt the token before storing
+        encrypted_access = self.encryption.encrypt(access_token)
+        encrypted_refresh = None
+        if refresh_token:
+            encrypted_refresh = self.encryption.encrypt(refresh_token)
+
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """
@@ -318,35 +324,61 @@ class TokenStore:
                 (access_token, refresh_token, expires_at, updated_at)
                 VALUES (?, ?, ?, CURRENT_TIMESTAMP)
                 """,
-                (access_token, refresh_token, expires_at),
+                (
+                    encrypted_access["encrypted_data"],
+                    encrypted_refresh["encrypted_data"] if encrypted_refresh else None,
+                    expires_at,
+                ),
             )
             conn.commit()
 
-        logger.info("OAuth token stored in database")
+        logger.info("OAuth token stored in database (encrypted)")
 
     def get_token(self) -> Optional[str]:
         """
-        Retrieve stored access token.
+        Retrieve and decrypt stored access token.
 
         Returns:
-            Access token string, or None if not stored.
+            Decrypted access token string, or None if not stored.
         """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute("SELECT access_token FROM oauth_tokens LIMIT 1")
             row = cursor.fetchone()
-            return row[0] if row else None
+            if not row:
+                return None
+
+            try:
+                encrypted_token: EncryptedToken = {
+                    "encrypted_data": row[0],
+                    "nonce": "",  # Not stored, but required for type
+                }
+                return self.encryption.decrypt(encrypted_token)
+            except ValueError as e:
+                logger.error(f"Failed to decrypt token: {e}")
+                return None
 
     def get_refresh_token(self) -> Optional[str]:
         """
-        Retrieve stored refresh token.
+        Retrieve and decrypt stored refresh token.
 
         Returns:
-            Refresh token string, or None if not stored.
+            Decrypted refresh token string, or None if not stored.
         """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute("SELECT refresh_token FROM oauth_tokens LIMIT 1")
             row = cursor.fetchone()
-            return row[0] if row else None
+            if not row or not row[0]:
+                return None
+
+            try:
+                encrypted_token: EncryptedToken = {
+                    "encrypted_data": row[0],
+                    "nonce": "",
+                }
+                return self.encryption.decrypt(encrypted_token)
+            except ValueError as e:
+                logger.error(f"Failed to decrypt refresh token: {e}")
+                return None
 
 
 class AuthManager:
