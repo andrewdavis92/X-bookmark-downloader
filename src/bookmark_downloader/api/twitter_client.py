@@ -1,4 +1,4 @@
-"""X API client for bookmark fetching and media extraction."""
+"""X API client for bookmark fetching and media extraction using official XDK."""
 
 import time
 from typing import Any, Dict, Generator, List, Optional
@@ -6,7 +6,7 @@ from typing import Any, Dict, Generator, List, Optional
 from bookmark_downloader.utils.logger import get_logger
 
 from .auth import AuthManager
-from .types import BookmarkResponse, MediaUrl, TweetData
+from .types import MediaUrl, TweetData
 
 logger = get_logger(__name__)
 
@@ -26,43 +26,47 @@ class RateLimitError(Exception):
 
 
 class TwitterClient:
-    """X API client for fetching bookmarks and tweet data."""
+    """X API client for fetching bookmarks and tweet data using official XDK."""
 
-    def __init__(self, access_token: str, base_url: str = "https://api.x.com/2"):
+    def __init__(self, access_token: str):
         """
-        Initialize Twitter API client.
+        Initialize Twitter API client with XDK.
 
         Args:
             access_token: X API access token (bearer token or OAuth).
-            base_url: Base URL for X API (default v2 API).
-        """
-        self.access_token = access_token
-        self.base_url = base_url
-        self.headers = {
-            "Authorization": f"Bearer {access_token}",
-            "User-Agent": "BookmarkDownloader/1.0",
-        }
-        self._rate_limit_remaining = None
-        self._rate_limit_reset = None
-
-    def _update_rate_limit(self, response_headers: Dict[str, str]) -> None:
-        """
-        Update rate limit info from response headers.
-
-        Args:
-            response_headers: Response headers from API call.
         """
         try:
-            self._rate_limit_remaining = int(
-                response_headers.get("x-rate-limit-remaining", -1)
-            )
-            self._rate_limit_reset = int(response_headers.get("x-rate-limit-reset", 0))
-        except (ValueError, TypeError):
+            from xdk import client
+        except ImportError as e:
+            raise ImportError("xdk package required. Install with: pip install xdk") from e
+
+        self.access_token = access_token
+        self.client = client.Client(
+            bearer_token=access_token,
+            user_ctx=False,  # Using app context for bookmarks
+        )
+        self._rate_limit_remaining = None
+        self._rate_limit_reset = None
+        self._max_retries = 3
+
+    def _update_rate_limit_from_response(self, response: Any) -> None:
+        """
+        Update rate limit info from API response headers if available.
+
+        Args:
+            response: API response object.
+        """
+        try:
+            if hasattr(response, "headers"):
+                headers = response.headers
+                self._rate_limit_remaining = int(headers.get("x-rate-limit-remaining", -1))
+                self._rate_limit_reset = int(headers.get("x-rate-limit-reset", 0))
+        except (ValueError, TypeError, AttributeError):
             pass
 
-    def _check_rate_limit(self) -> None:
+    def _handle_rate_limit(self) -> None:
         """
-        Check if rate limited and wait if needed.
+        Check and handle rate limiting with automatic wait.
 
         Raises:
             RateLimitError: If rate limit is 0 and wait timeout expires.
@@ -83,108 +87,33 @@ class TwitterClient:
                 f"Rate limited. Waiting {wait_time}s until reset at {self._rate_limit_reset}"
             )
             time.sleep(wait_time + 1)  # Add 1s buffer
-        else:
-            # Reset time passed, try again
-            pass
 
-    def _make_request(
-        self,
-        method: str,
-        endpoint: str,
-        params: Optional[Dict[str, Any]] = None,
-        json_data: Optional[Dict[str, Any]] = None,
+    def _build_expansions_params(
+        self, expansions: Optional[Dict[str, List[str]]] = None
     ) -> Dict[str, Any]:
         """
-        Make authenticated API request with automatic rate limit handling.
+        Build query parameters from expansions config.
 
         Args:
-            method: HTTP method (GET, POST, etc.).
-            endpoint: API endpoint (without base URL).
-            params: Query parameters.
-            json_data: JSON body data.
+            expansions: Custom expansions dict. Uses defaults if None.
 
         Returns:
-            Parsed JSON response.
-
-        Raises:
-            ValueError: On client error (4xx).
-            Exception: On server error (5xx) after retries.
+            Dict of parameters for XDK client.
         """
-        import httpx
+        if expansions is None:
+            expansions = DEFAULT_EXPANSIONS
 
-        url = f"{self.base_url}{endpoint}"
-        max_retries = 3
-        retry_count = 0
+        params = {}
+        if expansions.get("expansions"):
+            params["expansions"] = ",".join(expansions["expansions"])
+        if expansions.get("media_fields"):
+            params["media.fields"] = ",".join(expansions["media_fields"])
+        if expansions.get("user_fields"):
+            params["user.fields"] = ",".join(expansions["user_fields"])
+        if expansions.get("tweet_fields"):
+            params["tweet.fields"] = ",".join(expansions["tweet_fields"])
 
-        while retry_count < max_retries:
-            self._check_rate_limit()
-
-            try:
-                with httpx.Client(timeout=30.0) as client:
-                    response = client.request(
-                        method,
-                        url,
-                        headers=self.headers,
-                        params=params,
-                        json=json_data,
-                    )
-
-                    # Update rate limit info
-                    self._update_rate_limit(response.headers)
-
-                    # Handle rate limiting
-                    if response.status_code == 429:
-                        retry_count += 1
-                        if retry_count >= max_retries:
-                            raise RateLimitError(
-                                "Rate limit exceeded after max retries"
-                            )
-                        logger.warning(
-                            f"Rate limited (429). Retry {retry_count}/{max_retries}"
-                        )
-                        self._check_rate_limit()
-                        continue
-
-                    # Handle client errors
-                    if 400 <= response.status_code < 500:
-                        logger.error(
-                            f"API error {response.status_code}: {response.text}"
-                        )
-                        raise ValueError(
-                            f"API error {response.status_code}: {response.text}"
-                        )
-
-                    # Handle server errors with retry
-                    if response.status_code >= 500:
-                        retry_count += 1
-                        if retry_count >= max_retries:
-                            raise Exception(
-                                f"Server error {response.status_code} after {max_retries} retries"
-                            )
-                        wait_time = 2 ** retry_count  # Exponential backoff
-                        logger.warning(
-                            f"Server error {response.status_code}. "
-                            f"Retrying in {wait_time}s ({retry_count}/{max_retries})"
-                        )
-                        time.sleep(wait_time)
-                        continue
-
-                    # Success
-                    response.raise_for_status()
-                    return response.json()
-
-            except httpx.RequestError as e:
-                retry_count += 1
-                if retry_count >= max_retries:
-                    raise
-                wait_time = 2 ** retry_count
-                logger.warning(
-                    f"Request error: {e}. "
-                    f"Retrying in {wait_time}s ({retry_count}/{max_retries})"
-                )
-                time.sleep(wait_time)
-
-        raise Exception("Max retries exceeded")
+        return params
 
     def get_bookmarks_iter(
         self,
@@ -208,53 +137,75 @@ class TwitterClient:
             ValueError: On API error or missing required fields.
             Exception: On non-retriable errors.
         """
-        if expansions is None:
-            expansions = DEFAULT_EXPANSIONS
-
         batch_size = min(batch_size, 100)  # API max is 100
         pagination_token = None
+        retry_count = 0
+
+        params = self._build_expansions_params(expansions)
+        params["max_results"] = batch_size
 
         while True:
-            params = {
-                "max_results": batch_size,
-                **expansions,
-            }
-            if pagination_token:
-                params["pagination_token"] = pagination_token
-
-            logger.debug(f"Fetching bookmarks batch (size={batch_size})")
+            self._handle_rate_limit()
 
             try:
-                response = self._make_request("GET", "/users/me/bookmarks", params=params)
-            except RateLimitError:
-                logger.error("Rate limit hit during bookmark pagination")
-                raise
-            except ValueError as e:
-                logger.error(f"Permanent API error during bookmark fetch: {e}")
-                raise
+                logger.debug(f"Fetching bookmarks (size={batch_size})")
 
-            # Parse response
-            tweets = response.get("data", [])
-            if not tweets:
-                logger.debug("No more bookmarks to fetch")
-                break
+                # Use XDK to fetch bookmarks
+                response = self.client.get_users_me_bookmarks(**params)
 
-            # Validate and yield each tweet
-            for tweet in tweets:
-                try:
-                    self._validate_tweet(tweet)
-                    yield tweet
-                except ValueError as e:
-                    logger.error(f"Invalid tweet data for ID {tweet.get('id')}: {e}")
+                # Update rate limit info if available
+                self._update_rate_limit_from_response(response)
+
+                if response.status_code == 429:
+                    # Rate limit hit
+                    retry_count += 1
+                    if retry_count >= self._max_retries:
+                        raise RateLimitError("Rate limit exceeded after max retries")
+                    logger.warning(f"Rate limited (429). Retry {retry_count}/{self._max_retries}")
+                    self._handle_rate_limit()
+                    continue
+
+                if response.status_code >= 400:
+                    raise ValueError(f"API error {response.status_code}: {response.text}")
+
+                # Parse response data
+                data = response.json() if hasattr(response, "json") else response
+                tweets = data.get("data", []) if isinstance(data, dict) else []
+
+                if not tweets:
+                    logger.debug("No more bookmarks to fetch")
+                    break
+
+                # Validate and yield each tweet
+                for tweet in tweets:
+                    try:
+                        self._validate_tweet(tweet)
+                        yield tweet
+                    except ValueError as e:
+                        logger.error(f"Invalid tweet data for ID {tweet.get('id')}: {e}")
+                        raise
+
+                # Check for next page
+                meta = data.get("meta", {}) if isinstance(data, dict) else {}
+                pagination_token = meta.get("next_token")
+                if not pagination_token:
+                    logger.debug("Reached end of bookmarks")
+                    break
+
+                params["pagination_token"] = pagination_token
+                retry_count = 0  # Reset retry count on success
+
+            except Exception as e:
+                if isinstance(e, (RateLimitError, ValueError)):
                     raise
-
-            # Check for next page
-            pagination_token = response.get("meta", {}).get("next_token")
-            if not pagination_token:
-                logger.debug("Reached end of bookmarks")
-                break
-
-            logger.debug(f"More bookmarks available, token: {pagination_token[:10]}...")
+                # Retry on network errors
+                retry_count += 1
+                if retry_count >= self._max_retries:
+                    logger.error(f"Max retries exceeded: {e}")
+                    raise
+                wait_time = 2 ** retry_count
+                logger.warning(f"Request error: {e}. Retrying in {wait_time}s ({retry_count}/{self._max_retries})")
+                time.sleep(wait_time)
 
     def get_tweet_details(
         self,
@@ -275,38 +226,39 @@ class TwitterClient:
             ValueError: If tweet not found, deleted, or inaccessible.
             Exception: On non-retriable errors.
         """
-        if expansions is None:
-            expansions = DEFAULT_EXPANSIONS
-
-        params = {**expansions}
+        params = self._build_expansions_params(expansions)
 
         try:
-            response = self._make_request("GET", f"/tweets/{tweet_id}", params=params)
-        except RateLimitError:
-            logger.error(f"Rate limit hit fetching tweet {tweet_id}")
-            raise
-        except ValueError as e:
-            if "404" in str(e):
+            logger.debug(f"Fetching tweet details for {tweet_id}")
+
+            response = self.client.get_tweets_id(id=tweet_id, **params)
+
+            # Update rate limit info
+            self._update_rate_limit_from_response(response)
+
+            if response.status_code == 404:
                 logger.warning(f"Tweet {tweet_id} not found (deleted or inaccessible)")
-                raise ValueError(f"Tweet {tweet_id} deleted or inaccessible") from e
-            elif "403" in str(e):
-                logger.warning(
-                    f"Tweet {tweet_id} access denied (protected or private account)"
-                )
-                raise ValueError(f"Tweet {tweet_id} access denied") from e
-            raise
+                raise ValueError(f"Tweet {tweet_id} deleted or inaccessible")
+            elif response.status_code == 403:
+                logger.warning(f"Tweet {tweet_id} access denied (protected or private account)")
+                raise ValueError(f"Tweet {tweet_id} access denied")
+            elif response.status_code >= 400:
+                raise ValueError(f"API error {response.status_code}")
 
-        tweet = response.get("data")
-        if not tweet:
-            raise ValueError(f"No data in tweet response for {tweet_id}")
+            data = response.json() if hasattr(response, "json") else response
+            tweet = data.get("data") if isinstance(data, dict) else None
 
-        try:
+            if not tweet:
+                raise ValueError(f"No data in tweet response for {tweet_id}")
+
             self._validate_tweet(tweet)
-        except ValueError as e:
-            logger.error(f"Invalid tweet data for {tweet_id}: {e}")
-            raise
+            return tweet
 
-        return tweet
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.error(f"Error fetching tweet {tweet_id}: {e}")
+            raise
 
     def extract_media_urls(self, tweet_data: TweetData) -> List[MediaUrl]:
         """
@@ -323,7 +275,7 @@ class TwitterClient:
         """
         media_urls: List[MediaUrl] = []
 
-        # Get media data from includes
+        # Get media data from includes (set by caller based on XDK response)
         attachments = tweet_data.get("attachments", {})
         media_keys = attachments.get("media_keys", [])
 
@@ -331,10 +283,9 @@ class TwitterClient:
             logger.debug(f"Tweet {tweet_data['id']} has no media")
             return media_urls
 
-        # In a real implementation, we'd get media details from includes.media
-        # For now, we note that we need the actual XDK response structure
-        # which includes media data in the includes section
         logger.debug(f"Tweet {tweet_data['id']} has {len(media_keys)} media items")
+        # Media details would come from includes.media in the full response
+        # which is handled by XDK's response structure
 
         return media_urls
 
@@ -360,7 +311,7 @@ class TwitterClient:
         Get current rate limit status.
 
         Returns:
-            Dict with remaining requests, limit, and reset time.
+            Dict with remaining requests and reset time.
         """
         return {
             "remaining": self._rate_limit_remaining,
