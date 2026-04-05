@@ -12,7 +12,6 @@ from typing import Any, Dict, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
-from cryptography.fernet import Fernet, InvalidToken
 
 from bookmark_downloader.config import load_config
 from bookmark_downloader.utils.logger import get_logger
@@ -32,17 +31,24 @@ class TokenEncryption:
         Args:
             encryption_key: Encryption key (base64 encoded). If None, generates new key.
         """
-        if encryption_key:
-            self.cipher = Fernet(encryption_key.encode())
-        else:
-            key = Fernet.generate_key()
-            self.cipher = Fernet(key)
-            self._key = key.decode()
+        try:
+            from cryptography.fernet import Fernet
+
+            self.cipher = Fernet(encryption_key.encode()) if encryption_key else Fernet(
+                Fernet.generate_key()
+            )
+        except ImportError:
+            logger.warning(
+                "cryptography library not available, tokens will not be encrypted"
+            )
+            self.cipher = None
 
     @property
     def key(self) -> str:
         """Get the encryption key in base64 format."""
-        return self.cipher._signing_key + self.cipher._encryption_key
+        if self.cipher:
+            return self.cipher._signing_key + self.cipher._encryption_key
+        return ""
 
     def encrypt(self, token: str) -> EncryptedToken:
         """
@@ -54,6 +60,13 @@ class TokenEncryption:
         Returns:
             EncryptedToken with encrypted_data and nonce.
         """
+        if not self.cipher:
+            # Fallback: store unencrypted (not recommended for production)
+            return {
+                "encrypted_data": base64.b64encode(token.encode()).decode(),
+                "nonce": base64.b64encode(os.urandom(16)).decode(),
+            }
+
         encrypted = self.cipher.encrypt(token.encode())
         return {
             "encrypted_data": encrypted.decode(),
@@ -73,7 +86,16 @@ class TokenEncryption:
         Raises:
             ValueError: If decryption fails.
         """
+        if not self.cipher:
+            # Fallback: decode unencrypted
+            try:
+                return base64.b64decode(encrypted_token["encrypted_data"]).decode()
+            except Exception as e:
+                raise ValueError("Failed to decode token") from e
+
         try:
+            from cryptography.fernet import InvalidToken
+
             decrypted = self.cipher.decrypt(encrypted_token["encrypted_data"].encode())
             return decrypted.decode()
         except InvalidToken as e:
