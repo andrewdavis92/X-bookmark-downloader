@@ -263,6 +263,7 @@ X-bookmark-downloader/
 - **Response Types**: TypedDict for main data structures (Tweet, Media, Bookmark, etc.) for type safety and IDE autocomplete
 - **Rate Limit Handling**: Automatic & transparent - client detects rate limits and sleeps until reset, retries automatically
 - **Pagination**: Generator pattern - `get_bookmarks_iter(batch_size=100)` yields batches, handles pagination under the hood, caller controls progress
+- **API Expansions**: Configurable by caller with sensible defaults (author_id, public_metrics, created_at, attachments.media_keys, quote.id for tweets; media.type, media.url, media.alt_text for media)
 
 **Tasks:**
 - [ ] Update requirements.txt: replace tweepy with xdk
@@ -294,11 +295,28 @@ authenticate_user(config) -> str  # Returns access token
 refresh_access_token(refresh_token) -> str
 
 # twitter_client.py
-get_bookmarks(max_results: int = 100, pagination_token: str = None) -> Dict
-get_tweet_details(tweet_id: str) -> Dict
+get_bookmarks_iter(
+    batch_size: int = 100,
+    expansions: Optional[Dict[str, List[str]]] = None  # Configurable expansions
+) -> Generator[Dict, None, None]
+
+get_tweet_details(
+    tweet_id: str,
+    expansions: Optional[Dict[str, List[str]]] = None
+) -> Dict
+
 extract_media_urls(tweet_data: Dict) -> List[Dict]
 get_rate_limit_status() -> Dict
-wait_for_rate_limit_reset() -> None
+```
+
+**Default Expansions:**
+```python
+{
+    'expansions': ['author_id', 'public_metrics', 'created_at', 'attachments.media_keys', 'quote.id'],
+    'media_fields': ['type', 'url', 'public_metrics', 'alt_text'],
+    'user_fields': ['username', 'created_at', 'public_metrics'],
+    'tweet_fields': ['text', 'author_id', 'created_at', 'public_metrics', 'attachments']
+}
 ```
 
 **Dependencies:** Phase 1 (config)
