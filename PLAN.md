@@ -254,6 +254,11 @@ X-bookmark-downloader/
 **Duration:** 3-4 hours  
 **Deliverables:** X API client, authentication, bookmark fetching
 
+**Testing Approach:**
+- Mock XDK Client responses with fixtures (no external dependencies)
+- Unit tests for: happy path, rate limiting, deleted tweets, protected accounts, missing fields, token refresh, OAuth flow
+- *Future: Integration test suite with mocked data to test full data flows through entire app*
+
 **Implementation Details:**
 - **SDK**: Official X Developer Kit (XDK) for Python
 - **Authentication**: OAuth 2.0 Authorization Code Flow with PKCE
