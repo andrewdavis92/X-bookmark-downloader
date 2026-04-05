@@ -90,6 +90,7 @@ class TestBookmarkPagination:
     ):
         """Test fetching bookmarks when only one page."""
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = sample_bookmark_response
         mock_response.headers = {
             "x-rate-limit-remaining": "179",
@@ -136,6 +137,7 @@ class TestBookmarkPagination:
         }
 
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.side_effect = [response1, response2]
         mock_response.headers = {
             "x-rate-limit-remaining": "179",
@@ -155,6 +157,7 @@ class TestBookmarkPagination:
     def test_get_bookmarks_empty(self, mock_http_client: Mock, twitter_client: TwitterClient):
         """Test handling empty bookmark list."""
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = {"data": [], "meta": {"result_count": 0}}
         mock_response.headers = {
             "x-rate-limit-remaining": "179",
