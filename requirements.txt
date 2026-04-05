@@ -1,7 +1,10 @@
 # X Bookmark Downloader - Python Dependencies
 
 # API Client
-tweepy>=4.14.0
+xdk>=1.0.0
+
+# Security
+cryptography>=41.0.0
 
 # Video Download
 yt-dlp>=2024.01.01
