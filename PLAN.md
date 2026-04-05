@@ -262,6 +262,7 @@ X-bookmark-downloader/
 - **Rate Limits**: 180 requests/15min (GET), 50 requests/15min (POST/DELETE)
 - **Response Types**: TypedDict for main data structures (Tweet, Media, Bookmark, etc.) for type safety and IDE autocomplete
 - **Rate Limit Handling**: Automatic & transparent - client detects rate limits and sleeps until reset, retries automatically
+- **Pagination**: Generator pattern - `get_bookmarks_iter(batch_size=100)` yields batches, handles pagination under the hood, caller controls progress
 
 **Tasks:**
 - [ ] Update requirements.txt: replace tweepy with xdk
