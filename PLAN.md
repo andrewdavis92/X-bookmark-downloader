@@ -254,23 +254,47 @@ X-bookmark-downloader/
 **Duration:** 3-4 hours  
 **Deliverables:** X API client, authentication, bookmark fetching
 
+**Implementation Details:**
+- **SDK**: Official X Developer Kit (XDK) for Python
+- **Authentication**: OAuth 2.0 Authorization Code Flow with PKCE
+- **Redirect URI**: http://localhost:8000/callback (local HTTP server)
+- **Required Scopes**: tweet.read, users.read, bookmark.read, offline.access
+- **Rate Limits**: 180 requests/15min (GET), 50 requests/15min (POST/DELETE)
+
 **Tasks:**
+- [ ] Update requirements.txt: replace tweepy with xdk
+- [ ] Implement auth.py with:
+  - OAuth 2.0 PKCE flow using xdk.OAuth2PKCEAuth
+  - Local HTTP server on port 8000 for callback handling
+  - Token storage and refresh logic
+  - Credential validation
 - [ ] Implement twitter_client.py with:
-  - OAuth 2.0 authentication flow
-  - Bookmark fetching with pagination
-  - Tweet detail expansion (media, quotes)
+  - XDK client initialization
+  - Bookmark fetching with automatic pagination
+  - Tweet detail expansion (media, quotes, public_metrics)
   - Rate limit detection & handling
   - Error handling & retry logic
-- [ ] Implement auth.py for credential management
-- [ ] Create API response parsing utilities
-- [ ] Add rate limit monitoring
+- [ ] Create response parsing utilities:
+  - Extract media URLs from tweet data
+  - Parse quote post references
+  - Normalize API responses
+- [ ] Add rate limit monitoring:
+  - Track remaining requests
+  - Detect 429 responses
+  - Implement wait_for_rate_limit_reset logic
 
 **Key Methods:**
 ```python
-get_bookmarks(max_results, pagination_token) -> List[Tweet]
-get_tweet_details(tweet_id, expansions) -> Tweet
-extract_media_urls(tweet_data) -> List[MediaUrl]
-is_rate_limited() -> bool
+# auth.py
+get_oauth_client(config) -> XDKClient
+authenticate_user(config) -> str  # Returns access token
+refresh_access_token(refresh_token) -> str
+
+# twitter_client.py
+get_bookmarks(max_results: int = 100, pagination_token: str = None) -> Dict
+get_tweet_details(tweet_id: str) -> Dict
+extract_media_urls(tweet_data: Dict) -> List[Dict]
+get_rate_limit_status() -> Dict
 wait_for_rate_limit_reset() -> None
 ```
 
@@ -278,7 +302,8 @@ wait_for_rate_limit_reset() -> None
 
 **Critical Blockers:**
 - X API v2 elevated access required
-- OAuth credentials needed in .env
+- OAuth app registered with Client ID and redirect URI configured
+- Scopes: tweet.read, users.read, bookmark.read, offline.access
 
 ---
 
