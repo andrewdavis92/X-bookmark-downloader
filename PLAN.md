@@ -260,6 +260,8 @@ X-bookmark-downloader/
 - **Redirect URI**: http://localhost:8000/callback (local HTTP server)
 - **Required Scopes**: tweet.read, users.read, bookmark.read, offline.access
 - **Rate Limits**: 180 requests/15min (GET), 50 requests/15min (POST/DELETE)
+- **Response Types**: TypedDict for main data structures (Tweet, Media, Bookmark, etc.) for type safety and IDE autocomplete
+- **Rate Limit Handling**: Automatic & transparent - client detects rate limits and sleeps until reset, retries automatically
 
 **Tasks:**
 - [ ] Update requirements.txt: replace tweepy with xdk
