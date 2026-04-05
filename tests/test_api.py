@@ -81,7 +81,7 @@ class TestTwitterClientInitialization:
 class TestBookmarkPagination:
     """Test bookmark fetching with pagination."""
 
-    @patch("bookmark_downloader.api.twitter_client.httpx.Client")
+    @patch("httpx.Client")
     def test_get_bookmarks_single_page(
         self,
         mock_http_client: Mock,
@@ -105,7 +105,7 @@ class TestBookmarkPagination:
         assert bookmarks[0]["id"] == "1234567890"
         assert bookmarks[0]["text"] == "This is a test tweet"
 
-    @patch("bookmark_downloader.api.twitter_client.httpx.Client")
+    @patch("httpx.Client")
     def test_get_bookmarks_pagination(
         self,
         mock_http_client: Mock,
@@ -151,7 +151,7 @@ class TestBookmarkPagination:
         assert bookmarks[0]["id"] == "1234567890"
         assert bookmarks[1]["id"] == "9876543210"
 
-    @patch("bookmark_downloader.api.twitter_client.httpx.Client")
+    @patch("httpx.Client")
     def test_get_bookmarks_empty(self, mock_http_client: Mock, twitter_client: TwitterClient):
         """Test handling empty bookmark list."""
         mock_response = MagicMock()
@@ -172,7 +172,7 @@ class TestBookmarkPagination:
 class TestRateLimitHandling:
     """Test automatic rate limit handling."""
 
-    @patch("bookmark_downloader.api.twitter_client.httpx.Client")
+    @patch("httpx.Client")
     @patch("time.sleep")
     def test_rate_limit_wait_and_retry(
         self,
@@ -208,7 +208,7 @@ class TestRateLimitHandling:
         # Verify sleep was called
         assert mock_sleep.called
 
-    @patch("bookmark_downloader.api.twitter_client.httpx.Client")
+    @patch("httpx.Client")
     def test_rate_limit_max_retries_exceeded(
         self,
         mock_http_client: Mock,
@@ -233,7 +233,7 @@ class TestRateLimitHandling:
 class TestErrorHandling:
     """Test error handling for edge cases."""
 
-    @patch("bookmark_downloader.api.twitter_client.httpx.Client")
+    @patch("httpx.Client")
     def test_deleted_tweet_404_error(
         self,
         mock_http_client: Mock,
@@ -254,7 +254,7 @@ class TestErrorHandling:
         with pytest.raises(ValueError, match="deleted or inaccessible"):
             twitter_client.get_tweet_details("deleted_tweet_id")
 
-    @patch("bookmark_downloader.api.twitter_client.httpx.Client")
+    @patch("httpx.Client")
     def test_protected_tweet_403_error(
         self,
         mock_http_client: Mock,
@@ -296,7 +296,7 @@ class TestErrorHandling:
         with pytest.raises(ValueError, match="Missing required field: author_id"):
             twitter_client._validate_tweet(invalid_tweet)
 
-    @patch("bookmark_downloader.api.twitter_client.httpx.Client")
+    @patch("httpx.Client")
     def test_server_error_retry(
         self,
         mock_http_client: Mock,
@@ -401,7 +401,8 @@ class TestAuthManager:
     """Test authentication manager."""
 
     @patch.dict("os.environ", {"TWITTER_BEARER_TOKEN": "test_bearer_token"})
-    def test_get_access_token_bearer(self):
+    @patch("bookmark_downloader.api.auth.TokenStore")
+    def test_get_access_token_bearer(self, mock_token_store: Mock):
         """Test getting access token from bearer token."""
         manager = AuthManager({"paths": {"logs_directory": "/tmp"}})
         token = manager.get_access_token()
@@ -409,7 +410,8 @@ class TestAuthManager:
         assert token == "test_bearer_token"
 
     @patch.dict("os.environ", {}, clear=True)
-    def test_get_access_token_missing_credentials(self):
+    @patch("bookmark_downloader.api.auth.TokenStore")
+    def test_get_access_token_missing_credentials(self, mock_token_store: Mock):
         """Test error when no credentials provided."""
         manager = AuthManager({"paths": {"logs_directory": "/tmp"}})
 
