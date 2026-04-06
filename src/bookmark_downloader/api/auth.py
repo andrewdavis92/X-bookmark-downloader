@@ -24,24 +24,58 @@ logger = get_logger(__name__)
 class TokenEncryption:
     """Handle encryption and decryption of tokens for secure storage."""
 
-    def __init__(self, encryption_key: Optional[str] = None):
+    def __init__(self, encryption_key: Optional[str] = None, seed_value: Optional[str] = None):
         """
         Initialize token encryption.
 
         Args:
-            encryption_key: Encryption key (base64 encoded). If None, generates new key.
+            encryption_key: Encryption key (base64 encoded). If provided, uses this directly.
+            seed_value: Value to derive encryption key from (e.g., bearer token).
+                Required if encryption_key is None to ensure consistent encryption across runs.
         """
         try:
             from cryptography.fernet import Fernet
 
-            self.cipher = Fernet(encryption_key.encode()) if encryption_key else Fernet(
-                Fernet.generate_key()
-            )
+            if encryption_key:
+                # Use provided key directly
+                self.cipher = Fernet(encryption_key.encode())
+            elif seed_value:
+                # Derive key from seed value (e.g., bearer token) for deterministic, consistent encryption
+                # This ensures tokens encrypted in run 1 can be decrypted in run 2
+                derived_key = self._derive_key_from_seed(seed_value)
+                self.cipher = Fernet(derived_key)
+            else:
+                raise ValueError(
+                    "Either encryption_key or seed_value must be provided to initialize TokenEncryption. "
+                    "seed_value (like bearer token) ensures consistent encryption across runs."
+                )
         except ImportError:
             logger.warning(
                 "cryptography library not available, tokens will not be encrypted"
             )
             self.cipher = None
+
+    @staticmethod
+    def _derive_key_from_seed(seed_value: str) -> bytes:
+        """
+        Derive a consistent encryption key from a seed value using SHA-256.
+
+        The derived key is deterministic - same seed produces same key every time.
+        This allows tokens encrypted in one run to be decrypted in another run
+        without requiring separate key storage or management.
+
+        Args:
+            seed_value: Seed value (e.g., bearer token) to derive key from.
+
+        Returns:
+            Base64-encoded Fernet key suitable for encryption.
+        """
+        # Hash the seed value to get a consistent 32-byte value
+        hash_digest = hashlib.sha256(seed_value.encode()).digest()
+
+        # Encode to base64 for Fernet (Fernet requires base64-encoded key)
+        key = base64.urlsafe_b64encode(hash_digest)
+        return key
 
     @property
     def key(self) -> str:
@@ -264,16 +298,23 @@ class OAuth2PKCE:
 class TokenStore:
     """Manage token storage in SQLite database with encryption."""
 
-    def __init__(self, db_path: Path, encryption_key: Optional[str] = None):
+    def __init__(
+        self,
+        db_path: Path,
+        encryption_key: Optional[str] = None,
+        seed_value: Optional[str] = None,
+    ):
         """
         Initialize token store.
 
         Args:
             db_path: Path to SQLite database file.
-            encryption_key: Encryption key for tokens. If None, uses environment variable.
+            encryption_key: Encryption key for tokens (base64 encoded). Takes priority over seed_value.
+            seed_value: Value to derive encryption key from (e.g., bearer token).
+                Used if encryption_key is None. Provides consistent encryption across runs.
         """
         self.db_path = db_path
-        self.encryption = TokenEncryption(encryption_key)
+        self.encryption = TokenEncryption(encryption_key, seed_value)
         self._init_db()
 
     def _init_db(self) -> None:
@@ -298,6 +339,7 @@ class TokenStore:
         access_token: str,
         refresh_token: Optional[str] = None,
         expires_in: int = 7200,
+        seed_value: Optional[str] = None,
     ) -> None:
         """
         Store OAuth token in database (encrypted).
@@ -306,16 +348,25 @@ class TokenStore:
             access_token: The access token.
             refresh_token: Optional refresh token.
             expires_in: Token expiration time in seconds.
+            seed_value: Optional seed value for key derivation. If provided,
+                creates a new encryption instance with deterministic key derived from seed.
+                Typically the access token itself for consistent encryption across runs.
         """
         import time
 
         expires_at = int(time.time()) + expires_in
 
+        # Use provided seed_value for consistent encryption, or existing encryption
+        if seed_value:
+            encryption = TokenEncryption(seed_value=seed_value)
+        else:
+            encryption = self.encryption
+
         # Encrypt the token before storing
-        encrypted_access = self.encryption.encrypt(access_token)
+        encrypted_access = encryption.encrypt(access_token)
         encrypted_refresh = None
         if refresh_token:
-            encrypted_refresh = self.encryption.encrypt(refresh_token)
+            encrypted_refresh = encryption.encrypt(refresh_token)
 
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
@@ -352,7 +403,18 @@ class TokenStore:
                     "encrypted_data": row[0],
                     "nonce": "",  # Not stored, but required for type
                 }
-                return self.encryption.decrypt(encrypted_token)
+
+                # Try decryption with stored encryption instance first
+                try:
+                    return self.encryption.decrypt(encrypted_token)
+                except ValueError:
+                    # If stored encryption fails, try with client_id as seed value
+                    # This handles tokens encrypted with client_id derivation
+                    client_id = os.getenv("TWITTER_CLIENT_ID")
+                    if client_id:
+                        encryption = TokenEncryption(seed_value=client_id)
+                        return encryption.decrypt(encrypted_token)
+                    raise
             except ValueError as e:
                 logger.error(f"Failed to decrypt token: {e}")
                 return None
@@ -375,7 +437,18 @@ class TokenStore:
                     "encrypted_data": row[0],
                     "nonce": "",
                 }
-                return self.encryption.decrypt(encrypted_token)
+
+                # Try decryption with stored encryption instance first
+                try:
+                    return self.encryption.decrypt(encrypted_token)
+                except ValueError:
+                    # If stored encryption fails, try with client_id as seed value
+                    # This handles tokens encrypted with client_id derivation
+                    client_id = os.getenv("TWITTER_CLIENT_ID")
+                    if client_id:
+                        encryption = TokenEncryption(seed_value=client_id)
+                        return encryption.decrypt(encrypted_token)
+                    raise
             except ValueError as e:
                 logger.error(f"Failed to decrypt refresh token: {e}")
                 return None
@@ -394,6 +467,8 @@ class AuthManager:
         self.config = config or load_config()
         self.logs_dir = Path(self.config["paths"]["logs_directory"])
         self.db_path = self.logs_dir / "state.db"
+        # Token store initialized with no seed_value yet
+        # Seed value will be provided when storing tokens after we obtain the access token
         self.token_store = TokenStore(self.db_path)
 
     def get_access_token(self, skip_storage: bool = False) -> str:
@@ -474,10 +549,14 @@ class AuthManager:
 
         # Store token if not skipped
         if not skip_storage:
+            # Use client_id as seed value for deterministic key derivation across runs.
+            # This ensures tokens encrypted now can be decrypted in future runs,
+            # since client_id is stable and always available in the environment.
             self.token_store.store_token(
                 token_response["access_token"],
                 token_response.get("refresh_token"),
                 token_response["expires_in"],
+                seed_value=client_id,
             )
 
         logger.info("OAuth authentication successful")
