@@ -250,35 +250,119 @@ X-bookmark-downloader/
 
 ---
 
-### Phase 2: API Integration & Authentication
+### Phase 2: API Integration & Authentication ✅ COMPLETED
 **Duration:** 3-4 hours  
 **Deliverables:** X API client, authentication, bookmark fetching
 
+**Accomplishments:**
+- ✅ Official X Developer Kit (XDK) integrated for full API v2 support
+- ✅ OAuth 2.0 PKCE flow with local HTTP callback server (port 8000)
+- ✅ Bearer token authentication with priority over OAuth
+- ✅ Type-safe API responses using TypedDict
+- ✅ Transparent automatic rate limit handling with exponential backoff
+- ✅ Generator pattern for bookmark pagination (memory efficient)
+- ✅ Comprehensive error classification and edge case handling
+- ✅ Token encryption (graceful fallback if cryptography unavailable)
+- ✅ 21 unit tests covering all scenarios (100% pass rate)
+
+**Testing Approach:**
+- Mock XDK Client responses with fixtures (no external dependencies)
+- Unit tests for: happy path, rate limiting, deleted tweets, protected accounts, missing fields, token refresh, OAuth flow
+- *Future: Integration test suite with mocked data to test full data flows through entire app*
+
+**Implementation Details:**
+- **SDK**: Official X Developer Kit (XDK) for Python
+- **Authentication**: OAuth 2.0 Authorization Code Flow with PKCE
+- **Redirect URI**: http://localhost:8000/callback (local HTTP server)
+- **Required Scopes**: tweet.read, users.read, bookmark.read, offline.access
+- **Rate Limits**: 180 requests/15min (GET), 50 requests/15min (POST/DELETE)
+- **Response Types**: TypedDict for main data structures (Tweet, Media, Bookmark, etc.) for type safety and IDE autocomplete
+- **Rate Limit Handling**: Automatic & transparent - client detects rate limits and sleeps until reset, retries automatically
+- **Pagination**: Generator pattern - `get_bookmarks_iter(batch_size=100)` yields batches, handles pagination under the hood, caller controls progress
+**Credential & Token Management:**
+- **Priority Order**: 
+  1. Check `TWITTER_BEARER_TOKEN` environment variable (bearer token auth)
+  2. Check `TWITTER_CLIENT_ID` environment variable (OAuth flow)
+  3. If neither, exit with clear instructions for OAuth setup
+- **Token Storage**: In state.db with encryption at rest (use cryptography.fernet for AES encryption)
+- **Auto-Storage**: Tokens stored automatically after OAuth, but include `SKIP_TOKEN_STORAGE=true` flag to disable
+- **OAuth Flow**: If using OAuth, provide clear instructions on Client ID registration and redirect URI setup
+
 **Tasks:**
-- [ ] Implement twitter_client.py with:
-  - OAuth 2.0 authentication flow
-  - Bookmark fetching with pagination
-  - Tweet detail expansion (media, quotes)
-  - Rate limit detection & handling
-  - Error handling & retry logic
-- [ ] Implement auth.py for credential management
-- [ ] Create API response parsing utilities
-- [ ] Add rate limit monitoring
+- [x] Update requirements.txt: replace tweepy with xdk (0.9.0)
+- [x] Add cryptography for token encryption (graceful fallback if unavailable)
+- [x] Implement auth.py with:
+  - Bearer token authentication (priority)
+  - OAuth 2.0 PKCE flow with local HTTP server callback
+  - Token encryption/decryption with fallback to base64
+  - Token storage in state.db
+  - Token refresh logic for expired tokens
+  - Credential validation with clear error messages
+- [x] Implement twitter_client.py with:
+  - XDK client initialization with httpx
+  - Bookmark fetching with automatic pagination (generator pattern)
+  - Configurable API expansions (no metrics by default)
+  - Transparent rate limit detection & automatic wait
+  - Exponential backoff on server errors
+  - Edge case handling per spec (deleted, protected, text-only)
+- [x] Create response parsing utilities:
+  - Extract media URLs from tweet data
+  - TypedDict definitions for all response types
+  - Tweet validation for required fields
+- [x] Add rate limit monitoring:
+  - Track remaining requests from headers
+  - Detect 429 responses
+  - Automatic sleep until reset with logging
+
+**Error Handling & Edge Cases:**
+- **Deleted Tweets (404)**: Log warning and continue - nothing recoverable
+- **Protected/Private Content (403)**: Quarantine for review - user might gain access by following author
+- **Text-only Tweets**: Return data and save text in .txt file (same as media posts)
+- **Missing Required Fields**: Raise exception - data integrity issue, don't mark processed, retry later
+- **Rate Limit Hit During Pagination**: Auto-pause, wait for reset, resume transparently
+- **Retriable Errors** (timeouts, 429, 500/502/503): Retry in current round with exponential backoff, don't mark complete so next run can retry
+- **Permanent Errors** (validation failures): Quarantine item for manual review
+- **API Failures** (connection errors): Log and continue processing
+- **Processing Failures** (missing fields, malformed data): Raise exceptions to halt and alert
 
 **Key Methods:**
 ```python
-get_bookmarks(max_results, pagination_token) -> List[Tweet]
-get_tweet_details(tweet_id, expansions) -> Tweet
-extract_media_urls(tweet_data) -> List[MediaUrl]
-is_rate_limited() -> bool
-wait_for_rate_limit_reset() -> None
+# auth.py
+get_oauth_client(config) -> XDKClient
+authenticate_user(config) -> str  # Returns access token
+refresh_access_token(refresh_token) -> str
+
+# twitter_client.py
+get_bookmarks_iter(
+    batch_size: int = 100,
+    expansions: Optional[Dict[str, List[str]]] = None  # Configurable expansions
+) -> Generator[Dict, None, None]
+
+get_tweet_details(
+    tweet_id: str,
+    expansions: Optional[Dict[str, List[str]]] = None
+) -> Dict
+
+extract_media_urls(tweet_data: Dict) -> List[Dict]
+get_rate_limit_status() -> Dict
+```
+
+**Default Expansions:**
+```python
+{
+    'expansions': ['author_id', 'created_at', 'attachments.media_keys', 'quote.id'],
+    'media_fields': ['type', 'url', 'alt_text'],
+    'user_fields': ['username', 'created_at'],
+    'tweet_fields': ['text', 'author_id', 'created_at', 'attachments']
+}
 ```
 
 **Dependencies:** Phase 1 (config)
 
 **Critical Blockers:**
 - X API v2 elevated access required
-- OAuth credentials needed in .env
+- OAuth app registered with Client ID and redirect URI configured
+- Scopes: tweet.read, users.read, bookmark.read, offline.access
 
 ---
 
