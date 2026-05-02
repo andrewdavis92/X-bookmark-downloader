@@ -215,3 +215,29 @@ def test_mark_failed_logs_history(state_manager):
     row = cursor.fetchone()
     assert row["action"] == "failed"
     assert row["details"] == "network error"
+
+
+def test_update_status_changes_status(state_manager):
+    state_manager.mark_failed("tweet_3", "temp error")
+    state_manager.update_status("tweet_3", "success")
+    bookmark = state_manager._db._get_bookmark("tweet_3")
+    assert bookmark["status"] == "success"
+
+
+def test_update_status_sets_error_message(state_manager):
+    state_manager.update_status("tweet_4", "failed", error="403 Forbidden")
+    bookmark = state_manager._db._get_bookmark("tweet_4")
+    assert bookmark["last_error"] == "403 Forbidden"
+
+
+def test_update_status_on_new_tweet(state_manager):
+    state_manager.update_status("tweet_5", "quarantined", error="missing media")
+    bookmark = state_manager._db._get_bookmark("tweet_5")
+    assert bookmark["status"] == "quarantined"
+
+
+def test_update_status_without_error(state_manager):
+    state_manager.update_status("tweet_6", "success")
+    bookmark = state_manager._db._get_bookmark("tweet_6")
+    assert bookmark["status"] == "success"
+    assert bookmark["last_error"] is None

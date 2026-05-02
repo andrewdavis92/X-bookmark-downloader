@@ -192,3 +192,14 @@ class StateManager:
             retry_count=retry_count,
         )
         self._db._log_history(tweet_id, "failed", error)
+
+    def update_status(
+        self,
+        tweet_id: str,
+        status: str,
+        error: Optional[str] = None,
+    ) -> None:
+        kwargs: Dict = {"status": status}
+        if error is not None:
+            kwargs["last_error"] = error
+        self._db._upsert_bookmark(tweet_id, **kwargs)
