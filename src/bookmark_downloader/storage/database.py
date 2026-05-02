@@ -160,3 +160,24 @@ class StateManager:
 
     def close(self) -> None:
         self._db.close()
+
+    def is_already_processed(self, tweet_id: str) -> bool:
+        bookmark = self._db._get_bookmark(tweet_id)
+        return bookmark is not None and bookmark["status"] == "success"
+
+    def mark_processed(
+        self,
+        tweet_id: str,
+        status: str,
+        file_paths: List[str],
+        media_count: int = 0,
+    ) -> None:
+        now = datetime.utcnow().isoformat()
+        self._db._upsert_bookmark(
+            tweet_id,
+            status=status,
+            media_count=media_count,
+            folder_path=str(file_paths[0]) if file_paths else None,
+            downloaded_at=now,
+        )
+        self._db._log_history(tweet_id, "processed", f"media_count={media_count}")

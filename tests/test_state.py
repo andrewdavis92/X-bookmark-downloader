@@ -144,3 +144,46 @@ def test_state_manager_creates_db_file(db_path, state_manager):
 
 def test_state_manager_close_is_safe(state_manager):
     state_manager.close()  # should not raise
+
+
+def test_is_already_processed_false_for_new_tweet(state_manager):
+    assert state_manager.is_already_processed("tweet_1") is False
+
+
+def test_mark_processed_makes_tweet_processed(state_manager):
+    state_manager.mark_processed(
+        "tweet_1", "success", ["/downloads/@user/tweet_1_1.jpg"], media_count=1
+    )
+    assert state_manager.is_already_processed("tweet_1") is True
+
+
+def test_mark_processed_failed_status_not_processed(state_manager):
+    state_manager.mark_processed("tweet_1", "failed", [])
+    assert state_manager.is_already_processed("tweet_1") is False
+
+
+def test_mark_processed_stores_media_count(state_manager):
+    state_manager.mark_processed("tweet_1", "success", ["/path/file.jpg"], media_count=3)
+    bookmark = state_manager._db._get_bookmark("tweet_1")
+    assert bookmark["media_count"] == 3
+
+
+def test_mark_processed_stores_folder_path(state_manager):
+    state_manager.mark_processed(
+        "tweet_1", "success", ["/downloads/@user/tweet_1_1.jpg"]
+    )
+    bookmark = state_manager._db._get_bookmark("tweet_1")
+    assert bookmark["folder_path"] == "/downloads/@user/tweet_1_1.jpg"
+
+
+def test_mark_processed_with_empty_file_paths(state_manager):
+    state_manager.mark_processed("tweet_1", "success", [])
+    assert state_manager.is_already_processed("tweet_1") is True
+
+
+def test_mark_processed_logs_history(state_manager):
+    state_manager.mark_processed("tweet_1", "success", [], media_count=2)
+    cursor = state_manager._db._conn.execute(
+        "SELECT action FROM processing_history WHERE tweet_id = 'tweet_1'"
+    )
+    assert cursor.fetchone()["action"] == "processed"
