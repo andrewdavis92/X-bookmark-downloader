@@ -258,3 +258,158 @@ def test_download_video_yt_dlp_options(tmp_path):
     assert captured.get("noplaylist") is True
     assert captured.get("quiet") is True
     assert captured.get("no_warnings") is True
+
+
+# ---------------------------------------------------------------------------
+# coordinate_downloads tests
+# ---------------------------------------------------------------------------
+
+
+def _make_items(tmp_path, specs):
+    """Build MediaItems from (media_type, filename) pairs, all for tweet 111222333."""
+    from bookmark_downloader.download.media_handler import MediaItem
+    return [
+        MediaItem(
+            url=f"https://example.com/{fname}",
+            media_type=mtype,
+            dest_path=tmp_path / fname,
+            tweet_id="111222333",
+        )
+        for mtype, fname in specs
+    ]
+
+
+def _ok(item):
+    from bookmark_downloader.download.media_handler import DownloadResult
+    return DownloadResult(
+        url=item.url, dest_path=item.dest_path,
+        success=True, file_size=100, error=None, attempts=1,
+    )
+
+
+def _fail(item):
+    from bookmark_downloader.download.media_handler import DownloadResult
+    return DownloadResult(
+        url=item.url, dest_path=item.dest_path,
+        success=False, file_size=0, error="network error", attempts=1,
+    )
+
+
+def test_coordinate_all_succeed(tmp_path):
+    from bookmark_downloader.download.media_handler import coordinate_downloads
+
+    items = _make_items(tmp_path, [("photo", "a.jpg"), ("video", "b.mp4")])
+
+    with patch("bookmark_downloader.download.media_handler.download_image") as mock_img, \
+         patch("bookmark_downloader.download.media_handler.download_video") as mock_vid:
+        mock_img.return_value = _ok(items[0])
+        mock_vid.return_value = _ok(items[1])
+        stats = coordinate_downloads(items)
+
+    assert stats.succeeded == 2
+    assert stats.failed == 0
+    assert stats.total == 2
+    assert len(stats.results) == 2
+
+
+def test_coordinate_retry_then_succeed(tmp_path):
+    from bookmark_downloader.download.media_handler import coordinate_downloads
+
+    items = _make_items(tmp_path, [("photo", "a.jpg")])
+
+    with patch("bookmark_downloader.download.media_handler.download_image") as mock_img, \
+         patch("bookmark_downloader.download.media_handler.time") as mock_time:
+        mock_img.side_effect = [_fail(items[0]), _ok(items[0])]
+        stats = coordinate_downloads(items)
+
+    assert stats.succeeded == 1
+    assert stats.failed == 0
+    assert stats.results[0].attempts == 2
+    mock_time.sleep.assert_called_once_with(2)
+
+
+def test_coordinate_all_attempts_fail(tmp_path):
+    from bookmark_downloader.download.media_handler import coordinate_downloads
+
+    items = _make_items(tmp_path, [("photo", "a.jpg")])
+
+    with patch("bookmark_downloader.download.media_handler.download_image") as mock_img, \
+         patch("bookmark_downloader.download.media_handler.time"):
+        mock_img.return_value = _fail(items[0])
+        stats = coordinate_downloads(items)
+
+    assert stats.succeeded == 0
+    assert stats.failed == 1
+    assert stats.results[0].attempts == 3
+
+
+def test_coordinate_photo_routes_to_image(tmp_path):
+    from bookmark_downloader.download.media_handler import coordinate_downloads
+
+    items = _make_items(tmp_path, [("photo", "a.jpg")])
+
+    with patch("bookmark_downloader.download.media_handler.download_image") as mock_img, \
+         patch("bookmark_downloader.download.media_handler.download_video") as mock_vid:
+        mock_img.return_value = _ok(items[0])
+        coordinate_downloads(items)
+
+    mock_img.assert_called_once()
+    mock_vid.assert_not_called()
+
+
+def test_coordinate_video_routes_to_video(tmp_path):
+    from bookmark_downloader.download.media_handler import coordinate_downloads
+
+    items = _make_items(tmp_path, [("video", "b.mp4")])
+
+    with patch("bookmark_downloader.download.media_handler.download_image") as mock_img, \
+         patch("bookmark_downloader.download.media_handler.download_video") as mock_vid:
+        mock_vid.return_value = _ok(items[0])
+        coordinate_downloads(items)
+
+    mock_vid.assert_called_once()
+    mock_img.assert_not_called()
+
+
+def test_coordinate_animated_gif_routes_to_video(tmp_path):
+    from bookmark_downloader.download.media_handler import coordinate_downloads
+
+    items = _make_items(tmp_path, [("animated_gif", "c.mp4")])
+
+    with patch("bookmark_downloader.download.media_handler.download_image") as mock_img, \
+         patch("bookmark_downloader.download.media_handler.download_video") as mock_vid:
+        mock_vid.return_value = _ok(items[0])
+        coordinate_downloads(items)
+
+    mock_vid.assert_called_once()
+    mock_img.assert_not_called()
+
+
+def test_coordinate_unknown_type_counted_as_failed(tmp_path):
+    from bookmark_downloader.download.media_handler import coordinate_downloads
+
+    items = _make_items(tmp_path, [("external_link", "x.html")])
+    stats = coordinate_downloads(items)
+
+    assert stats.failed == 1
+    assert stats.succeeded == 0
+    assert stats.results[0].success is False
+
+
+def test_coordinate_total_equals_len_items(tmp_path):
+    from bookmark_downloader.download.media_handler import coordinate_downloads
+
+    items = _make_items(tmp_path, [
+        ("photo", "a.jpg"),
+        ("video", "b.mp4"),
+        ("animated_gif", "c.mp4"),
+    ])
+
+    with patch("bookmark_downloader.download.media_handler.download_image") as mock_img, \
+         patch("bookmark_downloader.download.media_handler.download_video") as mock_vid:
+        mock_img.return_value = _ok(items[0])
+        mock_vid.side_effect = [_ok(items[1]), _ok(items[2])]
+        stats = coordinate_downloads(items)
+
+    assert stats.total == 3
+    assert stats.tweet_id == "111222333"
