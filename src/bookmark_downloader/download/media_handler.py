@@ -1,7 +1,6 @@
 """Media download coordinator for X bookmark downloader."""
 
 import time
-from pathlib import Path
 from typing import List
 
 from bookmark_downloader.download.image_downloader import download_image
