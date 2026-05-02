@@ -241,3 +241,33 @@ def test_update_status_without_error(state_manager):
     bookmark = state_manager._db._get_bookmark("tweet_6")
     assert bookmark["status"] == "success"
     assert bookmark["last_error"] is None
+
+
+def test_get_failed_bookmarks_returns_failed(state_manager):
+    state_manager.mark_failed("tweet_a", "err1")
+    state_manager.mark_failed("tweet_b", "err2")
+    state_manager.mark_processed("tweet_c", "success", [])
+    results = state_manager.get_failed_bookmarks()
+    ids = {r["tweet_id"] for r in results}
+    assert "tweet_a" in ids
+    assert "tweet_b" in ids
+    assert "tweet_c" not in ids
+
+
+def test_get_failed_bookmarks_respects_limit(state_manager):
+    for i in range(5):
+        state_manager.mark_failed(f"tweet_{i}", "error")
+    results = state_manager.get_failed_bookmarks(limit=3)
+    assert len(results) == 3
+
+
+def test_get_failed_bookmarks_empty_when_none(state_manager):
+    assert state_manager.get_failed_bookmarks() == []
+
+
+def test_get_failed_bookmarks_returns_dicts(state_manager):
+    state_manager.mark_failed("tweet_z", "something broke")
+    results = state_manager.get_failed_bookmarks()
+    assert isinstance(results[0], dict)
+    assert "tweet_id" in results[0]
+    assert "last_error" in results[0]

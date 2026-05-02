@@ -203,3 +203,13 @@ class StateManager:
         if error is not None:
             kwargs["last_error"] = error
         self._db._upsert_bookmark(tweet_id, **kwargs)
+
+    def get_failed_bookmarks(self, limit: int = 100) -> List[Dict]:
+        cursor = self._db._conn.execute(
+            """SELECT * FROM bookmarks
+               WHERE status = 'failed'
+               ORDER BY updated_at DESC
+               LIMIT ?""",
+            (limit,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
