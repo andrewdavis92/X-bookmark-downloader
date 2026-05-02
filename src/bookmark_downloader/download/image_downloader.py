@@ -4,7 +4,7 @@ from pathlib import Path
 
 import httpx
 
-from bookmark_downloader.download.media_handler import DownloadResult
+from bookmark_downloader.download.types import DownloadResult
 
 
 def download_image(url: str, dest_path: Path, tweet_id: str, timeout: int = 60) -> DownloadResult:

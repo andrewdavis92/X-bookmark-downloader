@@ -1,51 +1,24 @@
 """Media download coordinator for X bookmark downloader."""
 
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
-from bookmark_downloader.utils.logger import get_logger
-
-logger = get_logger(__name__)
-
-
-@dataclass
-class MediaItem:
-    url: str
-    media_type: str
-    dest_path: Path
-    tweet_id: str
-
-
-@dataclass
-class DownloadResult:
-    url: str
-    dest_path: Path
-    success: bool
-    file_size: int
-    error: Optional[str]
-    attempts: int
-
-
-@dataclass
-class DownloadStats:
-    tweet_id: str
-    total: int
-    succeeded: int
-    failed: int
-    results: List[DownloadResult]
-
-
-# Import after dataclasses defined to avoid circular import
 from bookmark_downloader.download.image_downloader import download_image
 from bookmark_downloader.download.video_downloader import download_video
+from bookmark_downloader.download.types import DownloadResult, DownloadStats, MediaItem
+from bookmark_downloader.utils.logger import get_logger
+
+# Re-export so callers can still import from this module
+__all__ = ["MediaItem", "DownloadResult", "DownloadStats", "coordinate_downloads"]
+
+logger = get_logger(__name__)
 
 
 def coordinate_downloads(items: List[MediaItem], timeout: int = 600) -> DownloadStats:
     results: List[DownloadResult] = []
     max_attempts = 3
-    backoff = [2, 4, 8]
+    backoff = [2, 4]
 
     for item in items:
         logger.debug("Downloading %s for tweet %s", item.url, item.tweet_id)
