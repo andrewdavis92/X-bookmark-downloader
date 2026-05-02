@@ -141,5 +141,14 @@ class Database:
             )
         self._conn.commit()
 
+    def _log_history(
+        self, tweet_id: str, action: str, details: Optional[str] = None
+    ) -> None:
+        self._conn.execute(
+            "INSERT INTO processing_history (tweet_id, action, details) VALUES (?, ?, ?)",
+            (tweet_id, action, details),
+        )
+        self._conn.commit()
+
     def close(self) -> None:
         self._conn.close()

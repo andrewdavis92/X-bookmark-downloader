@@ -102,3 +102,33 @@ def test_upsert_does_not_duplicate(db):
         "SELECT COUNT(*) FROM bookmarks WHERE tweet_id = 'tweet_1'"
     )
     assert cursor.fetchone()[0] == 1
+
+
+def test_log_history_inserts_row(db):
+    db._upsert_bookmark("tweet_1", status="success")
+    db._log_history("tweet_1", "processed", "media_count=3")
+    cursor = db._conn.execute(
+        "SELECT action, details FROM processing_history WHERE tweet_id = 'tweet_1'"
+    )
+    row = cursor.fetchone()
+    assert row["action"] == "processed"
+    assert row["details"] == "media_count=3"
+
+
+def test_log_history_without_details(db):
+    db._upsert_bookmark("tweet_1", status="failed")
+    db._log_history("tweet_1", "failed")
+    cursor = db._conn.execute(
+        "SELECT action FROM processing_history WHERE tweet_id = 'tweet_1'"
+    )
+    assert cursor.fetchone()["action"] == "failed"
+
+
+def test_log_history_multiple_entries(db):
+    db._upsert_bookmark("tweet_1", status="failed")
+    db._log_history("tweet_1", "failed", "attempt 1")
+    db._log_history("tweet_1", "retried", "attempt 2")
+    cursor = db._conn.execute(
+        "SELECT COUNT(*) FROM processing_history WHERE tweet_id = 'tweet_1'"
+    )
+    assert cursor.fetchone()[0] == 2
