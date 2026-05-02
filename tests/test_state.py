@@ -60,7 +60,6 @@ def test_database_schema_version(db):
 
 
 def test_database_reopen_is_idempotent(db_path, db):
-    db.close()
     db2 = Database(db_path)
     cursor = db2._conn.execute("SELECT version FROM schema_version")
     assert cursor.fetchone()[0] == SCHEMA_VERSION
