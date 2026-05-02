@@ -213,3 +213,34 @@ class StateManager:
             (limit,),
         )
         return [dict(row) for row in cursor.fetchall()]
+
+    def get_processing_stats(self) -> ProcessingStats:
+        cursor = self._db._conn.execute(
+            """SELECT
+                   SUM(CASE WHEN status = 'success'     THEN 1 ELSE 0 END) AS total_processed,
+                   SUM(CASE WHEN status = 'failed'      THEN 1 ELSE 0 END) AS total_failed,
+                   SUM(CASE WHEN status = 'quarantined' THEN 1 ELSE 0 END) AS total_quarantined,
+                   MAX(downloaded_at)                                       AS last_run_at
+               FROM bookmarks"""
+        )
+        row = cursor.fetchone()
+        media_cursor = self._db._conn.execute(
+            "SELECT COUNT(*) AS cnt FROM media_files"
+        )
+        media_row = media_cursor.fetchone()
+        return ProcessingStats(
+            total_processed=row["total_processed"] or 0,
+            total_failed=row["total_failed"] or 0,
+            total_quarantined=row["total_quarantined"] or 0,
+            total_media_downloaded=media_row["cnt"],
+            last_run_at=row["last_run_at"],
+        )
+
+    def clear_old_entries(self, days: int = 90) -> int:
+        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cursor = self._db._conn.execute(
+            "DELETE FROM bookmarks WHERE updated_at < ? AND status = 'success'",
+            (cutoff,),
+        )
+        self._db._conn.commit()
+        return cursor.rowcount

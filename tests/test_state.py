@@ -1,5 +1,7 @@
 """Tests for state management (Phase 3)."""
 
+from datetime import datetime
+
 from bookmark_downloader.storage.database import ProcessingStats, SCHEMA_VERSION, Database, StateManager
 
 
@@ -271,3 +273,76 @@ def test_get_failed_bookmarks_returns_dicts(state_manager):
     assert isinstance(results[0], dict)
     assert "tweet_id" in results[0]
     assert "last_error" in results[0]
+
+
+from datetime import timedelta
+
+
+def test_get_processing_stats_empty(state_manager):
+    stats = state_manager.get_processing_stats()
+    assert stats.total_processed == 0
+    assert stats.total_failed == 0
+    assert stats.total_quarantined == 0
+    assert stats.total_media_downloaded == 0
+    assert stats.last_run_at is None
+
+
+def test_get_processing_stats_counts(state_manager):
+    state_manager.mark_processed("tweet_1", "success", [])
+    state_manager.mark_processed("tweet_2", "success", [])
+    state_manager.mark_failed("tweet_3", "err")
+    state_manager.update_status("tweet_4", "quarantined")
+    stats = state_manager.get_processing_stats()
+    assert stats.total_processed == 2
+    assert stats.total_failed == 1
+    assert stats.total_quarantined == 1
+
+
+def test_get_processing_stats_returns_dataclass(state_manager):
+    stats = state_manager.get_processing_stats()
+    assert isinstance(stats, ProcessingStats)
+
+
+def test_clear_old_entries_removes_old_successes(state_manager):
+    state_manager.mark_processed("tweet_old", "success", [])
+    old_date = (datetime.utcnow() - timedelta(days=91)).isoformat()
+    state_manager._db._conn.execute(
+        "UPDATE bookmarks SET updated_at = ? WHERE tweet_id = 'tweet_old'",
+        (old_date,),
+    )
+    state_manager._db._conn.commit()
+    removed = state_manager.clear_old_entries(days=90)
+    assert removed == 1
+    assert state_manager._db._get_bookmark("tweet_old") is None
+
+
+def test_clear_old_entries_keeps_recent(state_manager):
+    state_manager.mark_processed("tweet_new", "success", [])
+    removed = state_manager.clear_old_entries(days=90)
+    assert removed == 0
+    assert state_manager._db._get_bookmark("tweet_new") is not None
+
+
+def test_clear_old_entries_keeps_failed(state_manager):
+    state_manager.mark_failed("tweet_old_failed", "err")
+    old_date = (datetime.utcnow() - timedelta(days=91)).isoformat()
+    state_manager._db._conn.execute(
+        "UPDATE bookmarks SET updated_at = ? WHERE tweet_id = 'tweet_old_failed'",
+        (old_date,),
+    )
+    state_manager._db._conn.commit()
+    removed = state_manager.clear_old_entries(days=90)
+    assert removed == 0
+    assert state_manager._db._get_bookmark("tweet_old_failed") is not None
+
+
+def test_clear_old_entries_returns_count(state_manager):
+    for i in range(3):
+        state_manager.mark_processed(f"tweet_{i}", "success", [])
+    old_date = (datetime.utcnow() - timedelta(days=91)).isoformat()
+    state_manager._db._conn.execute(
+        "UPDATE bookmarks SET updated_at = ?", (old_date,)
+    )
+    state_manager._db._conn.commit()
+    removed = state_manager.clear_old_entries(days=90)
+    assert removed == 3
