@@ -86,3 +86,34 @@ def clean_env():
     # Restore original environment
     os.environ.clear()
     os.environ.update(original_env)
+
+
+@pytest.fixture
+def db_path(temp_dir) -> Path:
+    return temp_dir / "state.db"
+
+
+@pytest.fixture
+def db(db_path):
+    from bookmark_downloader.storage.database import Database
+
+    database = Database(db_path)
+    yield database
+    database.close()
+
+
+class _MockConfig:
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
+
+    def get_database_path(self) -> Path:
+        return self._db_path
+
+
+@pytest.fixture
+def state_manager(db_path):
+    from bookmark_downloader.storage.database import StateManager
+
+    sm = StateManager(_MockConfig(db_path))
+    yield sm
+    sm.close()
