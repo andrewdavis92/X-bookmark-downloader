@@ -152,3 +152,11 @@ class Database:
 
     def close(self) -> None:
         self._conn.close()
+
+
+class StateManager:
+    def __init__(self, config) -> None:
+        self._db = Database(config.get_database_path())
+
+    def close(self) -> None:
+        self._db.close()

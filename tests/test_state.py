@@ -1,6 +1,6 @@
 """Tests for state management (Phase 3)."""
 
-from bookmark_downloader.storage.database import ProcessingStats, SCHEMA_VERSION, Database
+from bookmark_downloader.storage.database import ProcessingStats, SCHEMA_VERSION, Database, StateManager
 
 
 def test_processing_stats_fields():
@@ -132,3 +132,15 @@ def test_log_history_multiple_entries(db):
         "SELECT COUNT(*) FROM processing_history WHERE tweet_id = 'tweet_1'"
     )
     assert cursor.fetchone()[0] == 2
+
+
+def test_state_manager_constructs(state_manager):
+    assert state_manager is not None
+
+
+def test_state_manager_creates_db_file(db_path, state_manager):
+    assert db_path.exists()
+
+
+def test_state_manager_close_is_safe(state_manager):
+    state_manager.close()  # should not raise
