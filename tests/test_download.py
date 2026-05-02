@@ -1,6 +1,8 @@
 """Tests for Phase 4 media download engine."""
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+import httpx
 
 
 def test_media_item_fields():
@@ -75,3 +77,96 @@ def test_download_stats_fields():
     assert stats.failed == 0
     assert len(stats.results) == 1
     assert stats.results[0] is r
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _httpx_mock(status_code, chunks):
+    """Return a mock httpx.stream() context manager."""
+    mock_response = MagicMock()
+    mock_response.status_code = status_code
+    mock_response.iter_bytes.return_value = iter(chunks)
+    mock_cm = MagicMock()
+    mock_cm.__enter__.return_value = mock_response
+    mock_cm.__exit__.return_value = False
+    return mock_cm
+
+
+# ---------------------------------------------------------------------------
+# Image downloader tests
+# ---------------------------------------------------------------------------
+
+
+def test_download_image_success(tmp_path):
+    from bookmark_downloader.download.image_downloader import download_image
+
+    dest = tmp_path / "photo.jpg"
+    with patch("httpx.stream", return_value=_httpx_mock(200, [b"fake image data"])):
+        result = download_image("https://pbs.twimg.com/media/abc.jpg", dest, "111")
+
+    assert result.success is True
+    assert result.file_size == len(b"fake image data")
+    assert result.error is None
+    assert result.attempts == 1
+    assert dest.exists()
+    assert not dest.with_suffix(".tmp").exists()
+
+
+def test_download_image_non_2xx(tmp_path):
+    from bookmark_downloader.download.image_downloader import download_image
+
+    dest = tmp_path / "photo.jpg"
+    with patch("httpx.stream", return_value=_httpx_mock(404, [])):
+        result = download_image("https://pbs.twimg.com/media/abc.jpg", dest, "111")
+
+    assert result.success is False
+    assert result.error == "HTTP 404"
+    assert result.file_size == 0
+    assert not dest.exists()
+
+
+def test_download_image_empty_file(tmp_path):
+    from bookmark_downloader.download.image_downloader import download_image
+
+    dest = tmp_path / "photo.jpg"
+    # iter_bytes yields nothing → 0-byte temp file
+    with patch("httpx.stream", return_value=_httpx_mock(200, [])):
+        result = download_image("https://pbs.twimg.com/media/abc.jpg", dest, "111")
+
+    assert result.success is False
+    assert result.error == "empty file"
+    assert not dest.exists()
+
+
+def test_download_image_timeout_returns_failure(tmp_path):
+    from bookmark_downloader.download.image_downloader import download_image
+
+    dest = tmp_path / "photo.jpg"
+    with patch("httpx.stream", side_effect=httpx.TimeoutException("timed out")):
+        result = download_image("https://pbs.twimg.com/media/abc.jpg", dest, "111")
+
+    assert result.success is False
+    assert result.file_size == 0
+    assert result.error is not None
+
+
+def test_download_image_no_tmp_left_on_exception(tmp_path):
+    from bookmark_downloader.download.image_downloader import download_image
+
+    dest = tmp_path / "photo.jpg"
+    # Simulate exception mid-stream (after the temp file is opened)
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.iter_bytes.side_effect = IOError("connection reset")
+    mock_cm = MagicMock()
+    mock_cm.__enter__.return_value = mock_response
+    mock_cm.__exit__.return_value = False
+
+    with patch("httpx.stream", return_value=mock_cm):
+        result = download_image("https://pbs.twimg.com/media/abc.jpg", dest, "111")
+
+    assert result.success is False
+    assert not dest.with_suffix(".tmp").exists()
