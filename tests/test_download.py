@@ -3,6 +3,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 import httpx
+import yt_dlp
 
 
 def test_media_item_fields():
@@ -170,3 +171,80 @@ def test_download_image_no_tmp_left_on_exception(tmp_path):
 
     assert result.success is False
     assert not dest.with_suffix(".tmp").exists()
+
+
+# ---------------------------------------------------------------------------
+# Video downloader tests
+# ---------------------------------------------------------------------------
+
+
+def _yt_dlp_mock(dest, write_bytes=b"fake video data", raise_error=None):
+    """Return a mock yt_dlp.YoutubeDL(opts) context manager."""
+    def fake_download(urls):
+        if raise_error:
+            raise raise_error
+        dest.with_suffix(".tmp").write_bytes(write_bytes)
+
+    mock_ydl = MagicMock()
+    mock_ydl.download.side_effect = fake_download
+    mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
+    mock_ydl.__exit__ = MagicMock(return_value=False)
+    return mock_ydl
+
+
+def test_download_video_success(tmp_path):
+    from bookmark_downloader.download.video_downloader import download_video
+
+    dest = tmp_path / "video.mp4"
+    with patch("yt_dlp.YoutubeDL", return_value=_yt_dlp_mock(dest)):
+        result = download_video("https://t.co/abc123", dest, "111")
+
+    assert result.success is True
+    assert result.file_size == len(b"fake video data")
+    assert result.error is None
+    assert result.attempts == 1
+    assert dest.exists()
+    assert not dest.with_suffix(".tmp").exists()
+
+
+def test_download_video_download_error(tmp_path):
+    from bookmark_downloader.download.video_downloader import download_video
+
+    dest = tmp_path / "video.mp4"
+    error = yt_dlp.utils.DownloadError("video unavailable")
+    with patch("yt_dlp.YoutubeDL", return_value=_yt_dlp_mock(dest, raise_error=error)):
+        result = download_video("https://t.co/abc123", dest, "111")
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.file_size == 0
+
+
+def test_download_video_empty_file(tmp_path):
+    from bookmark_downloader.download.video_downloader import download_video
+
+    dest = tmp_path / "video.mp4"
+    with patch("yt_dlp.YoutubeDL", return_value=_yt_dlp_mock(dest, write_bytes=b"")):
+        result = download_video("https://t.co/abc123", dest, "111")
+
+    assert result.success is False
+    assert result.error == "empty file"
+    assert not dest.exists()
+
+
+def test_download_video_yt_dlp_options(tmp_path):
+    from bookmark_downloader.download.video_downloader import download_video
+
+    dest = tmp_path / "video.mp4"
+    captured = {}
+
+    def capture(opts):
+        captured.update(opts)
+        return _yt_dlp_mock(dest)
+
+    with patch("yt_dlp.YoutubeDL", side_effect=capture):
+        download_video("https://t.co/abc123", dest, "111")
+
+    assert captured.get("noplaylist") is True
+    assert captured.get("quiet") is True
+    assert captured.get("no_warnings") is True
