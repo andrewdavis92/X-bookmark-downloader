@@ -187,3 +187,31 @@ def test_mark_processed_logs_history(state_manager):
         "SELECT action FROM processing_history WHERE tweet_id = 'tweet_1'"
     )
     assert cursor.fetchone()["action"] == "processed"
+
+
+def test_mark_failed_sets_status(state_manager):
+    state_manager.mark_failed("tweet_2", "Download timed out")
+    bookmark = state_manager._db._get_bookmark("tweet_2")
+    assert bookmark["status"] == "failed"
+    assert bookmark["last_error"] == "Download timed out"
+
+
+def test_mark_failed_not_counted_as_processed(state_manager):
+    state_manager.mark_failed("tweet_2", "some error")
+    assert state_manager.is_already_processed("tweet_2") is False
+
+
+def test_mark_failed_stores_retry_count(state_manager):
+    state_manager.mark_failed("tweet_2", "error", retry_count=2)
+    bookmark = state_manager._db._get_bookmark("tweet_2")
+    assert bookmark["retry_count"] == 2
+
+
+def test_mark_failed_logs_history(state_manager):
+    state_manager.mark_failed("tweet_2", "network error")
+    cursor = state_manager._db._conn.execute(
+        "SELECT action, details FROM processing_history WHERE tweet_id = 'tweet_2'"
+    )
+    row = cursor.fetchone()
+    assert row["action"] == "failed"
+    assert row["details"] == "network error"

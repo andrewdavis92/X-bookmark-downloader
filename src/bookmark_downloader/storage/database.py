@@ -181,3 +181,14 @@ class StateManager:
             downloaded_at=now,
         )
         self._db._log_history(tweet_id, "processed", f"media_count={media_count}")
+
+    def mark_failed(
+        self, tweet_id: str, error: str, retry_count: int = 0
+    ) -> None:
+        self._db._upsert_bookmark(
+            tweet_id,
+            status="failed",
+            last_error=error,
+            retry_count=retry_count,
+        )
+        self._db._log_history(tweet_id, "failed", error)
