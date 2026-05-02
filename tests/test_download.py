@@ -260,6 +260,19 @@ def test_download_video_yt_dlp_options(tmp_path):
     assert captured.get("no_warnings") is True
 
 
+def test_download_video_unexpected_exception(tmp_path):
+    from bookmark_downloader.download.video_downloader import download_video
+
+    dest = tmp_path / "video.mp4"
+
+    with patch("yt_dlp.YoutubeDL", side_effect=RuntimeError("unexpected")):
+        result = download_video("https://t.co/abc123", dest, "111")
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.file_size == 0
+
+
 # ---------------------------------------------------------------------------
 # coordinate_downloads tests
 # ---------------------------------------------------------------------------

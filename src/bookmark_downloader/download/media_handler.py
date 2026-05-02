@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 def coordinate_downloads(items: List[MediaItem], timeout: int = 600) -> DownloadStats:
     results: List[DownloadResult] = []
     max_attempts = 3
-    backoff = [2, 4]
+    backoff = [2, 4, 8]  # seconds between attempts; index = attempt number - 1
 
     for item in items:
         logger.debug("Downloading %s for tweet %s", item.url, item.tweet_id)

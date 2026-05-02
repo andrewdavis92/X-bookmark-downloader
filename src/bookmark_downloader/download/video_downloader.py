@@ -64,5 +64,14 @@ def download_video(url: str, dest_path: Path, tweet_id: str, timeout: int = 600)
             error=str(e),
             attempts=1,
         )
+    except Exception as e:
+        return DownloadResult(
+            url=url,
+            dest_path=dest_path,
+            success=False,
+            file_size=0,
+            error=str(e),
+            attempts=1,
+        )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
