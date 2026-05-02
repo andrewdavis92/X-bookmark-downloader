@@ -33,7 +33,9 @@ def download_video(url: str, dest_path: Path, tweet_id: str, timeout: int = 600)
                 error="no output file",
                 attempts=1,
             )
-        shutil.move(str(candidates[0]), str(dest_path))
+        stem_match = [f for f in candidates if f.stem == dest_path.stem]
+        chosen = stem_match[0] if stem_match else candidates[0]
+        shutil.move(str(chosen), str(dest_path))
         file_size = dest_path.stat().st_size
         if file_size == 0:
             dest_path.unlink()

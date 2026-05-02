@@ -214,7 +214,7 @@ def test_download_video_success(tmp_path):
     assert result.error is None
     assert result.attempts == 1
     assert dest.exists()
-    assert not dest.with_suffix(".tmp").exists()
+    assert not any(p.is_dir() and p.name.startswith("tmp") for p in dest.parent.iterdir())
 
 
 def test_download_video_download_error(tmp_path):
