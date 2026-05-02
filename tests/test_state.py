@@ -64,3 +64,41 @@ def test_database_reopen_is_idempotent(db_path, db):
     cursor = db2._conn.execute("SELECT version FROM schema_version")
     assert cursor.fetchone()[0] == SCHEMA_VERSION
     db2.close()
+
+
+def test_bookmark_exists_false_for_unknown(db):
+    assert db._bookmark_exists("no_such_id") is False
+
+
+def test_upsert_bookmark_creates_record(db):
+    db._upsert_bookmark("tweet_1", status="success")
+    assert db._bookmark_exists("tweet_1") is True
+
+
+def test_get_bookmark_returns_record(db):
+    db._upsert_bookmark("tweet_1", status="success", author_username="@alice")
+    result = db._get_bookmark("tweet_1")
+    assert result is not None
+    assert result["tweet_id"] == "tweet_1"
+    assert result["status"] == "success"
+    assert result["author_username"] == "@alice"
+
+
+def test_get_bookmark_returns_none_for_missing(db):
+    assert db._get_bookmark("no_such_tweet") is None
+
+
+def test_upsert_updates_existing_record(db):
+    db._upsert_bookmark("tweet_1", status="failed")
+    db._upsert_bookmark("tweet_1", status="success")
+    result = db._get_bookmark("tweet_1")
+    assert result["status"] == "success"
+
+
+def test_upsert_does_not_duplicate(db):
+    db._upsert_bookmark("tweet_1", status="failed")
+    db._upsert_bookmark("tweet_1", status="success")
+    cursor = db._conn.execute(
+        "SELECT COUNT(*) FROM bookmarks WHERE tweet_id = 'tweet_1'"
+    )
+    assert cursor.fetchone()[0] == 1

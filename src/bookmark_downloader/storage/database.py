@@ -103,5 +103,43 @@ class Database:
                 "INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,)
             )
 
+    def _bookmark_exists(self, tweet_id: str) -> bool:
+        cursor = self._conn.execute(
+            "SELECT 1 FROM bookmarks WHERE tweet_id = ?", (tweet_id,)
+        )
+        return cursor.fetchone() is not None
+
+    def _get_bookmark(self, tweet_id: str) -> Optional[Dict]:
+        cursor = self._conn.execute(
+            "SELECT * FROM bookmarks WHERE tweet_id = ?", (tweet_id,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def _upsert_bookmark(self, tweet_id: str, **kwargs) -> None:
+        now = datetime.utcnow().isoformat()
+        kwargs["updated_at"] = now
+        if not self._bookmark_exists(tweet_id):
+            kwargs["tweet_id"] = tweet_id
+            kwargs.setdefault("author_username", None)
+            kwargs.setdefault("author_id", None)
+            kwargs["created_at"] = now
+            cols = ", ".join(kwargs.keys())
+            placeholders = ", ".join("?" for _ in kwargs)
+            self._conn.execute(
+                f"INSERT INTO bookmarks ({cols}) VALUES ({placeholders})",
+                list(kwargs.values()),
+            )
+        else:
+            # Never overwrite identity fields on update
+            for field in ("tweet_id", "author_username", "author_id", "created_at"):
+                kwargs.pop(field, None)
+            setters = ", ".join(f"{k} = ?" for k in kwargs)
+            self._conn.execute(
+                f"UPDATE bookmarks SET {setters} WHERE tweet_id = ?",
+                list(kwargs.values()) + [tweet_id],
+            )
+        self._conn.commit()
+
     def close(self) -> None:
         self._conn.close()
