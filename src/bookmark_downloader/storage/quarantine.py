@@ -37,6 +37,5 @@ def classify_error(exc: Exception) -> ErrorCategory:
 
 
 class QuarantineManager:
-    """Manages quarantined items (stub for Task 2+)."""
-
-    pass
+    def __init__(self, config: Config) -> None:
+        self._quarantine_dir = config.get_quarantine_dir()

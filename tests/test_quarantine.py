@@ -1,8 +1,6 @@
 from unittest.mock import MagicMock
 from pathlib import Path
 
-import pytest
-
 from bookmark_downloader.api.twitter_client import RateLimitError
 from bookmark_downloader.storage.quarantine import (
     ErrorCategory,
