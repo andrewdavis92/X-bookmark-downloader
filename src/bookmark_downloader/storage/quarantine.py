@@ -119,10 +119,10 @@ class QuarantineManager:
             lines += ["", "FAILURES", "--------"]
             for r in failed:
                 lines += [
-                    f"Tweet ID:    {r['tweet_id']}",
+                    f"Tweet ID:    {r.get('tweet_id', 'unknown')}",
                     f"  Category:    {r.get('error_category', 'unknown')}",
                     f"  Error:       {r.get('error', 'unknown')}",
-                    f"  Retry Count: {r['retry_count']}",
+                    f"  Retry Count: {r.get('retry_count', '?')}",
                     "",
                 ]
 
