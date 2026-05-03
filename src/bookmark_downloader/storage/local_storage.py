@@ -3,7 +3,7 @@
 import json
 import re
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
 
@@ -133,7 +133,7 @@ class LocalStorage:
     ) -> None:
         folder = self.ensure_author_directory(username)
         metadata_path = folder / "_metadata.json"
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         sanitized = self._sanitize_username(username)
 
         try:
