@@ -116,9 +116,18 @@ class TwitterClient:
         return params
 
     def _map_quoted_tweet_id(self, tweet: Dict) -> Optional[str]:
+        """
+        Extract quoted tweet ID from referenced_tweets array.
+
+        Args:
+            tweet: Raw tweet dict from API response.
+
+        Returns:
+            ID of the quoted tweet, or None if not a quote.
+        """
         for ref in tweet.get("referenced_tweets", []):
             if ref.get("type") == "quoted":
-                return ref["id"]
+                return ref.get("id")
         return None
 
     def get_bookmarks_iter(
