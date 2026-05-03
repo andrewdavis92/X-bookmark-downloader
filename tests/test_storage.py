@@ -111,3 +111,26 @@ class TestSavePostContent:
         content = path.read_text(encoding="utf-8")
         assert "Updated text" in content
         assert "Hello world" not in content
+
+
+class TestCreateQuotedSymlink:
+    def test_create_quoted_symlink_relative_path(self, tmp_path):
+        storage = make_storage(tmp_path)
+        storage.ensure_author_directory("user2")
+        (tmp_path / "@user2" / "9876543210.txt").write_text("quoted", encoding="utf-8")
+
+        link = storage.create_quoted_symlink("user1", "1234567890", "user2", "9876543210")
+
+        assert link.is_symlink()
+        assert link.readlink() == Path("..") / "@user2" / "9876543210.txt"
+
+    def test_create_quoted_symlink_idempotent(self, tmp_path):
+        storage = make_storage(tmp_path)
+        storage.create_quoted_symlink("user1", "1234567890", "user2", "9876543210")
+        storage.create_quoted_symlink("user1", "1234567890", "user2", "9876543210")  # Must not raise
+
+    def test_create_quoted_symlink_dangling(self, tmp_path):
+        storage = make_storage(tmp_path)
+        link = storage.create_quoted_symlink("user1", "1234567890", "user2", "9876543210")
+        assert link.is_symlink()
+        assert not link.exists()  # Target absent — dangling symlink is expected

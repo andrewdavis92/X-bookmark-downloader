@@ -100,3 +100,24 @@ class LocalStorage:
         txt_path.write_text("\n".join(lines), encoding="utf-8")
         logger.debug("Saved post content for %s to %s", post_id, txt_path)
         return txt_path
+
+    def create_quoted_symlink(
+        self,
+        parent_username: str,
+        parent_post_id: str,
+        quoted_username: str,
+        quoted_post_id: str,
+        quote_index: int = 1,
+    ) -> Path:
+        link_path = self.get_quoted_link_path(parent_username, parent_post_id, quote_index)
+        self.ensure_author_directory(parent_username)
+
+        if link_path.exists() or link_path.is_symlink():
+            logger.debug("Symlink already exists at %s, skipping", link_path)
+            return link_path
+
+        quoted_folder = self._sanitize_username(quoted_username)
+        target = Path("..") / quoted_folder / f"{quoted_post_id}.txt"
+        link_path.symlink_to(target)
+        logger.debug("Created symlink %s -> %s", link_path, target)
+        return link_path
