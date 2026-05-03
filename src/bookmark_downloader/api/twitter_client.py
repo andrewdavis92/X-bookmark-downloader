@@ -12,10 +12,10 @@ logger = get_logger(__name__)
 
 # Default expansions for API requests (configurable by caller)
 DEFAULT_EXPANSIONS = {
-    "expansions": ["author_id", "created_at", "attachments.media_keys", "quote.id"],
+    "expansions": ["author_id", "created_at", "attachments.media_keys", "referenced_tweets.id"],
     "media_fields": ["type", "url", "alt_text"],
     "user_fields": ["username", "created_at"],
-    "tweet_fields": ["text", "author_id", "created_at", "attachments"],
+    "tweet_fields": ["text", "author_id", "created_at", "attachments", "referenced_tweets"],
 }
 
 
@@ -115,6 +115,12 @@ class TwitterClient:
 
         return params
 
+    def _map_quoted_tweet_id(self, tweet: Dict) -> Optional[str]:
+        for ref in tweet.get("referenced_tweets", []):
+            if ref.get("type") == "quoted":
+                return ref["id"]
+        return None
+
     def get_bookmarks_iter(
         self,
         batch_size: int = 100,
@@ -180,6 +186,9 @@ class TwitterClient:
                 for tweet in tweets:
                     try:
                         self._validate_tweet(tweet)
+                        quoted_id = self._map_quoted_tweet_id(tweet)
+                        if quoted_id:
+                            tweet["quoted_tweet_id"] = quoted_id
                         yield tweet
                     except ValueError as e:
                         logger.error(f"Invalid tweet data for ID {tweet.get('id')}: {e}")
@@ -252,6 +261,9 @@ class TwitterClient:
                 raise ValueError(f"No data in tweet response for {tweet_id}")
 
             self._validate_tweet(tweet)
+            quoted_id = self._map_quoted_tweet_id(tweet)
+            if quoted_id:
+                tweet["quoted_tweet_id"] = quoted_id
             return tweet
 
         except ValueError:

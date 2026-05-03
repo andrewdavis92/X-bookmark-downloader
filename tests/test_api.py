@@ -407,3 +407,29 @@ class TestAuthManager:
 
         with pytest.raises(ValueError, match="No authentication credentials found"):
             manager.get_access_token()
+
+
+class TestMapQuotedTweetId:
+    """Test _map_quoted_tweet_id helper method."""
+
+    @patch("xdk.client.Client")
+    def test_returns_quoted_id_when_type_is_quoted(self, mock_xdk_client: Mock):
+        client = TwitterClient(access_token="test_token")
+        result = client._map_quoted_tweet_id({
+            "referenced_tweets": [{"type": "quoted", "id": "9876543210"}]
+        })
+        assert result == "9876543210"
+
+    @patch("xdk.client.Client")
+    def test_returns_none_when_type_is_replied_to(self, mock_xdk_client: Mock):
+        client = TwitterClient(access_token="test_token")
+        result = client._map_quoted_tweet_id({
+            "referenced_tweets": [{"type": "replied_to", "id": "9876543210"}]
+        })
+        assert result is None
+
+    @patch("xdk.client.Client")
+    def test_returns_none_when_no_referenced_tweets(self, mock_xdk_client: Mock):
+        client = TwitterClient(access_token="test_token")
+        result = client._map_quoted_tweet_id({})
+        assert result is None
