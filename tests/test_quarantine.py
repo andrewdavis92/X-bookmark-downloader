@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock
 from pathlib import Path
+import json
 
 from bookmark_downloader.api.twitter_client import RateLimitError
 from bookmark_downloader.storage.quarantine import (
@@ -60,7 +61,6 @@ def test_quarantine_item_writes_tweet_json(tmp_path):
     qm.quarantine_item("tweet_123", data, ValueError("bad"), ErrorCategory.PERMANENT)
     tweet_json = tmp_path / "quarantine" / "tweet_123" / "tweet.json"
     assert tweet_json.exists()
-    import json
     assert json.loads(tweet_json.read_text()) == data
 
 
