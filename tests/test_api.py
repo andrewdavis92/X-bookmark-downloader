@@ -407,3 +407,40 @@ class TestAuthManager:
 
         with pytest.raises(ValueError, match="No authentication credentials found"):
             manager.get_access_token()
+
+
+class TestMapQuotedTweetId:
+    """Test _map_quoted_tweet_id helper method."""
+
+    def test_returns_quoted_id_when_type_is_quoted(self):
+        with patch("xdk.client.Client"):
+            client = TwitterClient(access_token="test_token")
+            result = client._map_quoted_tweet_id({
+                "referenced_tweets": [{"type": "quoted", "id": "9876543210"}]
+            })
+        assert result == "9876543210"
+
+    def test_returns_none_when_type_is_replied_to(self):
+        with patch("xdk.client.Client"):
+            client = TwitterClient(access_token="test_token")
+            result = client._map_quoted_tweet_id({
+                "referenced_tweets": [{"type": "replied_to", "id": "9876543210"}]
+            })
+        assert result is None
+
+    def test_returns_none_when_no_referenced_tweets(self):
+        with patch("xdk.client.Client"):
+            client = TwitterClient(access_token="test_token")
+            result = client._map_quoted_tweet_id({})
+        assert result is None
+
+    def test_returns_quoted_id_when_mixed_with_replied_to(self):
+        with patch("xdk.client.Client"):
+            client = TwitterClient(access_token="test_token")
+            result = client._map_quoted_tweet_id({
+                "referenced_tweets": [
+                    {"type": "replied_to", "id": "1111111111"},
+                    {"type": "quoted", "id": "9876543210"},
+                ]
+            })
+        assert result == "9876543210"

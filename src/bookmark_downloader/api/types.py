@@ -34,7 +34,8 @@ class TweetData(TypedDict):
     author_id: NotRequired[str]
     created_at: NotRequired[str]
     attachments: NotRequired[Dict[str, List[str]]]  # e.g. {"media_keys": ["7_1234"]}
-    quoted_tweet_id: NotRequired[str]
+    referenced_tweets: NotRequired[List[Dict[str, str]]]  # raw from API; e.g. [{"type": "quoted", "id": "9876"}]
+    quoted_tweet_id: NotRequired[str]  # mapped by client from referenced_tweets
 
 
 class BookmarkResponse(TypedDict):
