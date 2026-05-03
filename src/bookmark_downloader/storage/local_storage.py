@@ -49,6 +49,10 @@ class LocalStorage:
         created_at = post_data.get("created_at", "")
         text = post_data["text"]
         media_files = post_data.get("media_files", [])
+        quoted_tweet_id = post_data.get("quoted_tweet_id")
+        quoted_author = post_data.get("quoted_author")
+        quoted_text = post_data.get("quoted_text")
+        quoted_created_at = post_data.get("quoted_created_at")
 
         try:
             dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
@@ -64,11 +68,34 @@ class LocalStorage:
             text,
         ]
 
-        if media_files:
+        has_media = bool(media_files)
+        has_quote = bool(quoted_tweet_id)
+
+        if has_media or has_quote:
             lines.extend(["", "---"])
+
+        if has_media:
             lines.append(f"Media: {len(media_files)} item{'s' if len(media_files) != 1 else ''}")
             for f in media_files:
                 lines.append(f"  - {f}")
+
+        if has_quote:
+            if has_media:
+                lines.append("")
+            quoted_author_str = f"@{quoted_author}" if quoted_author else quoted_tweet_id
+            lines.append(f"Quoted Tweet: {quoted_tweet_id} by {quoted_author_str}")
+            lines.append(f"Quoted Link: {post_id}_quoted_1.link")
+            lines.append("---")
+            if quoted_author:
+                lines.append(f"Quote Author: @{quoted_author}")
+            if quoted_created_at:
+                try:
+                    qdt = datetime.fromisoformat(quoted_created_at.replace("Z", "+00:00"))
+                    lines.append(f"Quote Posted: {qdt.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+                except (ValueError, AttributeError):
+                    lines.append(f"Quote Posted: {quoted_created_at}")
+            if quoted_text:
+                lines.append(f"Quote Text: {quoted_text}")
 
         txt_path.write_text("\n".join(lines), encoding="utf-8")
         logger.debug("Saved post content for %s to %s", post_id, txt_path)

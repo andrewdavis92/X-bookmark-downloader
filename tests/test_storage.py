@@ -85,3 +85,29 @@ class TestSavePostContent:
         assert "  - 1234567890_1.jpg" in content
         assert "  - 1234567890_2.mp4" in content
         assert "Quoted Tweet:" not in content
+
+    def test_save_post_content_with_quote(self, tmp_path):
+        storage = make_storage(tmp_path)
+        post = {
+            **self.BASE_POST,
+            "quoted_tweet_id": "9876543210",
+            "quoted_author": "otheruser",
+            "quoted_text": "Quoted content",
+            "quoted_created_at": "2024-04-04T12:00:00Z",
+        }
+        path = storage.save_post_content("testuser", "1234567890", post)
+        content = path.read_text(encoding="utf-8")
+        assert "Quoted Tweet: 9876543210 by @otheruser" in content
+        assert "Quoted Link: 1234567890_quoted_1.link" in content
+        assert "Quote Author: @otheruser" in content
+        assert "Quote Posted: 2024-04-04 12:00:00 UTC" in content
+        assert "Quote Text: Quoted content" in content
+
+    def test_save_post_content_overwrites(self, tmp_path):
+        storage = make_storage(tmp_path)
+        storage.save_post_content("testuser", "1234567890", self.BASE_POST)
+        updated = {**self.BASE_POST, "text": "Updated text"}
+        path = storage.save_post_content("testuser", "1234567890", updated)
+        content = path.read_text(encoding="utf-8")
+        assert "Updated text" in content
+        assert "Hello world" not in content
