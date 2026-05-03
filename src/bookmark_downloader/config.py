@@ -10,7 +10,7 @@ Loads configuration from multiple sources in order of precedence:
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, ClassVar, Dict, Optional
 
 import yaml
 from dotenv import load_dotenv
@@ -20,7 +20,7 @@ class Config:
     """Configuration management with multiple source support."""
 
     # Default values
-    DEFAULTS = {
+    DEFAULTS: ClassVar[Dict[str, Any]] = {
         "twitter": {
             "bearer_token": None,
             "request_timeout": 30,
@@ -57,7 +57,7 @@ class Config:
         },
     }
 
-    def __init__(self, config_file: Optional[str] = None):
+    def __init__(self, config_file: Optional[str] = None) -> None:
         """Initialize configuration.
 
         Args:
