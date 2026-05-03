@@ -152,7 +152,7 @@ paths:
             config = Config(str(config_file))
             downloads_dir = config.get_downloads_dir()
 
-            assert downloads_dir == temp_dir / "downloads"
+            assert downloads_dir == (temp_dir / "downloads").resolve()
         finally:
             os.chdir(original_cwd)
 
