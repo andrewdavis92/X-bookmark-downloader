@@ -121,3 +121,27 @@ def test_list_quarantined_ids(tmp_path):
 def test_list_quarantined_ids_empty(tmp_path):
     qm = make_quarantine_manager(tmp_path)
     assert qm.list_quarantined_ids() == []
+
+
+def test_generate_report_writes_file(tmp_path):
+    qm = make_quarantine_manager(tmp_path)
+    results = [
+        {"tweet_id": "tweet_111", "outcome": "success", "retry_count": 1},
+        {
+            "tweet_id": "tweet_456",
+            "outcome": "failed",
+            "error": "something went wrong",
+            "error_category": "permanent",
+            "retry_count": 3,
+        },
+    ]
+    report_path = qm.generate_report(results)
+    assert report_path.exists()
+    content = report_path.read_text()
+    assert "Retried:   2" in content
+    assert "Succeeded: 1" in content
+    assert "Failed:    1" in content
+    assert "tweet_456" in content
+    assert "something went wrong" in content
+    assert "permanent" in content
+    assert "Retry Count: 3" in content

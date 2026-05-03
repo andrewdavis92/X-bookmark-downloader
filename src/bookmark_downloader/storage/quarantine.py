@@ -96,3 +96,37 @@ class QuarantineManager:
             for entry in self._quarantine_dir.iterdir()
             if entry.is_dir()
         ]
+
+    def generate_report(self, results: List[Dict]) -> Path:
+        now = datetime.now(timezone.utc)
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
+        report_path = self._quarantine_dir / f"quarantine_report_{timestamp}.txt"
+
+        succeeded = [r for r in results if r["outcome"] == "success"]
+        failed = [r for r in results if r["outcome"] == "failed"]
+
+        header_date = now.strftime("%Y-%m-%dT%H:%M:%S")
+        title = f"Quarantine Retry Report — {header_date}"
+        lines = [
+            title,
+            "=" * len(title),
+            f"Retried:   {len(results)}",
+            f"Succeeded: {len(succeeded)}",
+            f"Failed:    {len(failed)}",
+        ]
+
+        if failed:
+            lines += ["", "FAILURES", "--------"]
+            for r in failed:
+                lines += [
+                    f"Tweet ID:    {r['tweet_id']}",
+                    f"  Category:    {r.get('error_category', 'unknown')}",
+                    f"  Error:       {r.get('error', 'unknown')}",
+                    f"  Retry Count: {r['retry_count']}",
+                    "",
+                ]
+
+        self._quarantine_dir.mkdir(parents=True, exist_ok=True)
+        report_path.write_text("\n".join(lines), encoding="utf-8")
+        logger.debug("Generated quarantine report at %s", report_path)
+        return report_path
