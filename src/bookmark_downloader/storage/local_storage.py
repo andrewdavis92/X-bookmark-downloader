@@ -2,9 +2,14 @@
 
 import re
 import unicodedata
+from datetime import datetime
 from pathlib import Path
+from typing import Dict
 
 from bookmark_downloader.config import Config
+from bookmark_downloader.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class LocalStorage:
@@ -34,3 +39,30 @@ class LocalStorage:
         folder = self.get_author_folder(username)
         folder.mkdir(parents=True, exist_ok=True)
         return folder
+
+    def save_post_content(self, username: str, post_id: str, post_data: Dict) -> Path:
+        folder = self.ensure_author_directory(username)
+        txt_path = folder / f"{post_id}.txt"
+
+        author_username = post_data["author_username"]
+        author_id = post_data["author_id"]
+        created_at = post_data.get("created_at", "")
+        text = post_data["text"]
+
+        try:
+            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            posted = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+        except (ValueError, AttributeError):
+            posted = created_at
+
+        lines = [
+            f"Author: @{author_username} ({author_id})",
+            f"Posted: {posted}",
+            f"URL: https://x.com/{author_username}/status/{post_id}",
+            "",
+            text,
+        ]
+
+        txt_path.write_text("\n".join(lines), encoding="utf-8")
+        logger.debug("Saved post content for %s to %s", post_id, txt_path)
+        return txt_path

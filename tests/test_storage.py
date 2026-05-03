@@ -54,3 +54,24 @@ class TestEnsureAuthorDirectory:
         storage = make_storage(tmp_path)
         storage.ensure_author_directory("testuser")
         storage.ensure_author_directory("testuser")  # Must not raise
+
+
+class TestSavePostContent:
+    BASE_POST = {
+        "author_username": "testuser",
+        "author_id": "123456789",
+        "created_at": "2024-04-04T14:30:00Z",
+        "text": "Hello world",
+        "media_files": [],
+    }
+
+    def test_save_post_content_text_only(self, tmp_path):
+        storage = make_storage(tmp_path)
+        path = storage.save_post_content("testuser", "1234567890", self.BASE_POST)
+        content = path.read_text(encoding="utf-8")
+        assert "Author: @testuser (123456789)" in content
+        assert "Posted: 2024-04-04 14:30:00 UTC" in content
+        assert "URL: https://x.com/testuser/status/1234567890" in content
+        assert "Hello world" in content
+        assert "Media:" not in content
+        assert "Quoted Tweet:" not in content
