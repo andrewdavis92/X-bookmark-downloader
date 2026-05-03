@@ -134,3 +134,35 @@ class TestCreateQuotedSymlink:
         link = storage.create_quoted_symlink("user1", "1234567890", "user2", "9876543210")
         assert link.is_symlink()
         assert not link.exists()  # Target absent — dangling symlink is expected
+
+
+class TestUpdateAuthorMetadata:
+    def test_update_author_metadata_creates(self, tmp_path):
+        storage = make_storage(tmp_path)
+        storage.update_author_metadata("testuser", "123456789", posts_delta=1, media_delta=2)
+        data = json.loads((tmp_path / "@testuser" / "_metadata.json").read_text(encoding="utf-8"))
+        assert data["username"] == "@testuser"
+        assert data["user_id"] == "123456789"
+        assert data["posts_downloaded"] == 1
+        assert data["total_media_files"] == 2
+        assert data["symlinks_created"] == 0
+        assert "first_seen" in data
+        assert "last_seen" in data
+
+    def test_update_author_metadata_increments(self, tmp_path):
+        storage = make_storage(tmp_path)
+        storage.update_author_metadata("testuser", "123456789", posts_delta=1, media_delta=2)
+        storage.update_author_metadata("testuser", "123456789", posts_delta=1, media_delta=3, symlinks_delta=1)
+        data = json.loads((tmp_path / "@testuser" / "_metadata.json").read_text(encoding="utf-8"))
+        assert data["posts_downloaded"] == 2
+        assert data["total_media_files"] == 5
+        assert data["symlinks_created"] == 1
+
+    def test_update_author_metadata_corrupt_json(self, tmp_path):
+        storage = make_storage(tmp_path)
+        storage.ensure_author_directory("testuser")
+        (tmp_path / "@testuser" / "_metadata.json").write_text("not valid json", encoding="utf-8")
+        storage.update_author_metadata("testuser", "123456789")
+        data = json.loads((tmp_path / "@testuser" / "_metadata.json").read_text(encoding="utf-8"))
+        assert data["username"] == "@testuser"
+        assert data["posts_downloaded"] == 1

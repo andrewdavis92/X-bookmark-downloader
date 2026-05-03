@@ -1,5 +1,6 @@
 """Local file system storage for X bookmark downloader."""
 
+import json
 import re
 import unicodedata
 from datetime import datetime
@@ -121,3 +122,45 @@ class LocalStorage:
         link_path.symlink_to(target)
         logger.debug("Created symlink %s -> %s", link_path, target)
         return link_path
+
+    def update_author_metadata(
+        self,
+        username: str,
+        user_id: str,
+        posts_delta: int = 1,
+        media_delta: int = 0,
+        symlinks_delta: int = 0,
+    ) -> None:
+        folder = self.ensure_author_directory(username)
+        metadata_path = folder / "_metadata.json"
+        now = datetime.utcnow().isoformat()
+        sanitized = self._sanitize_username(username)
+
+        try:
+            existing = (
+                json.loads(metadata_path.read_text(encoding="utf-8"))
+                if metadata_path.exists()
+                else None
+            )
+        except (json.JSONDecodeError, OSError):
+            existing = None
+
+        if existing is None:
+            metadata = {
+                "username": sanitized,
+                "user_id": user_id,
+                "first_seen": now,
+                "last_seen": now,
+                "posts_downloaded": posts_delta,
+                "total_media_files": media_delta,
+                "symlinks_created": symlinks_delta,
+            }
+        else:
+            metadata = existing
+            metadata["last_seen"] = now
+            metadata["posts_downloaded"] = existing.get("posts_downloaded", 0) + posts_delta
+            metadata["total_media_files"] = existing.get("total_media_files", 0) + media_delta
+            metadata["symlinks_created"] = existing.get("symlinks_created", 0) + symlinks_delta
+
+        metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        logger.debug("Updated metadata for %s", sanitized)
