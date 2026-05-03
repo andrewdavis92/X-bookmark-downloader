@@ -1,7 +1,5 @@
 """Tests for processing module."""
 
-import pytest
-
 from bookmark_downloader.processing.quote_resolver import extract_quoted_tweet_id
 
 
