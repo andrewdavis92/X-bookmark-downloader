@@ -3,12 +3,8 @@
 import re
 import unicodedata
 from pathlib import Path
-from typing import Dict
 
 from bookmark_downloader.config import Config
-from bookmark_downloader.utils.logger import get_logger
-
-logger = get_logger(__name__)
 
 
 class LocalStorage:
