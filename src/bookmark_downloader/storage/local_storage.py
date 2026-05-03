@@ -48,6 +48,7 @@ class LocalStorage:
         author_id = post_data["author_id"]
         created_at = post_data.get("created_at", "")
         text = post_data["text"]
+        media_files = post_data.get("media_files", [])
 
         try:
             dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
@@ -62,6 +63,12 @@ class LocalStorage:
             "",
             text,
         ]
+
+        if media_files:
+            lines.extend(["", "---"])
+            lines.append(f"Media: {len(media_files)} item{'s' if len(media_files) != 1 else ''}")
+            for f in media_files:
+                lines.append(f"  - {f}")
 
         txt_path.write_text("\n".join(lines), encoding="utf-8")
         logger.debug("Saved post content for %s to %s", post_id, txt_path)

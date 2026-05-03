@@ -75,3 +75,13 @@ class TestSavePostContent:
         assert "Hello world" in content
         assert "Media:" not in content
         assert "Quoted Tweet:" not in content
+
+    def test_save_post_content_with_media(self, tmp_path):
+        storage = make_storage(tmp_path)
+        post = {**self.BASE_POST, "media_files": ["1234567890_1.jpg", "1234567890_2.mp4"]}
+        path = storage.save_post_content("testuser", "1234567890", post)
+        content = path.read_text(encoding="utf-8")
+        assert "Media: 2 items" in content
+        assert "  - 1234567890_1.jpg" in content
+        assert "  - 1234567890_2.mp4" in content
+        assert "Quoted Tweet:" not in content
