@@ -11,7 +11,7 @@ from typing import Dict, Optional
 from bookmark_downloader.api.twitter_client import BookmarkClient
 from bookmark_downloader.config import get_config, reload_config
 from bookmark_downloader.storage.database import StateManager
-from bookmark_downloader.storage.quarantine import ErrorCategory, QuarantineManager, classify_error
+from bookmark_downloader.storage.quarantine import QuarantineManager, classify_error
 from bookmark_downloader.utils.logger import Logger, get_logger
 
 
@@ -124,7 +124,8 @@ def show_stats(config) -> bool:
 
 
 def _reprocess_tweet(tweet_data: Dict) -> None:
-    raise NotImplementedError("_reprocess_tweet implemented in Phase 8")
+    """Process a single tweet's data for download. Implemented in Phase 8."""
+    raise NotImplementedError("reprocess logic not yet implemented; see Phase 8")
 
 
 def retry_quarantine(config, limit: Optional[int] = None) -> bool:
@@ -144,7 +145,7 @@ def retry_quarantine(config, limit: Optional[int] = None) -> bool:
         state_manager = StateManager(config)
         bookmark_client = BookmarkClient(config)
 
-        quarantined = state_manager.get_quarantined_bookmarks(limit or 100)
+        quarantined = state_manager.get_quarantined_bookmarks(limit if limit is not None else 100)
         logger.info("Found %d quarantined items to retry", len(quarantined))
 
         results = []
