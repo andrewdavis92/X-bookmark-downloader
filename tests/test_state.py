@@ -377,3 +377,13 @@ def test_get_quarantined_bookmarks_limit(state_manager):
         state_manager.mark_quarantined(f"tweet_lim_{i}", "error")
     rows = state_manager.get_quarantined_bookmarks(limit=3)
     assert len(rows) == 3
+
+
+def test_mark_quarantined_logs_history(state_manager):
+    state_manager.mark_quarantined("tweet_q4", "deleted tweet")
+    cursor = state_manager._db._conn.execute(
+        "SELECT action, details FROM processing_history WHERE tweet_id = 'tweet_q4'"
+    )
+    row = cursor.fetchone()
+    assert row["action"] == "quarantined"
+    assert row["details"] == "deleted tweet"
