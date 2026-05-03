@@ -72,3 +72,27 @@ class QuarantineManager:
 
         logger.debug("Quarantined tweet %s (category=%s)", tweet_id, error_category.value)
         return item_dir
+
+    def get_tweet_data(self, tweet_id: str) -> Optional[Dict]:
+        tweet_json = self.get_item_dir(tweet_id) / "tweet.json"
+        if not tweet_json.exists():
+            return None
+        try:
+            return json.loads(tweet_json.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    def remove_item(self, tweet_id: str) -> None:
+        item_dir = self.get_item_dir(tweet_id)
+        if item_dir.exists():
+            shutil.rmtree(item_dir)
+            logger.debug("Removed quarantine item %s", tweet_id)
+
+    def list_quarantined_ids(self) -> List[str]:
+        if not self._quarantine_dir.exists():
+            return []
+        return [
+            entry.name
+            for entry in self._quarantine_dir.iterdir()
+            if entry.is_dir()
+        ]
