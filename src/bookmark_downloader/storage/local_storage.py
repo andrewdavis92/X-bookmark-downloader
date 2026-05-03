@@ -29,3 +29,8 @@ class LocalStorage:
 
     def get_quoted_link_path(self, username: str, post_id: str, quote_index: int) -> Path:
         return self.get_author_folder(username) / f"{post_id}_quoted_{quote_index}.link"
+
+    def ensure_author_directory(self, username: str) -> Path:
+        folder = self.get_author_folder(username)
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder

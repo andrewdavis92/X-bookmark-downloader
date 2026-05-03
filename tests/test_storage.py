@@ -41,3 +41,16 @@ class TestSanitizeUsername:
     def test_sanitize_username_at_prefix(self, tmp_path):
         storage = make_storage(tmp_path)
         assert storage._sanitize_username("@testuser") == "@testuser"
+
+
+class TestEnsureAuthorDirectory:
+    def test_ensure_author_directory_creates(self, tmp_path):
+        storage = make_storage(tmp_path)
+        folder = storage.ensure_author_directory("testuser")
+        assert folder.is_dir()
+        assert folder == tmp_path / "@testuser"
+
+    def test_ensure_author_directory_idempotent(self, tmp_path):
+        storage = make_storage(tmp_path)
+        storage.ensure_author_directory("testuser")
+        storage.ensure_author_directory("testuser")  # Must not raise
