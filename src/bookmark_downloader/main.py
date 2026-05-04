@@ -246,7 +246,7 @@ Examples:
 
         # Override log level if specified
         if args.log_level:
-            config.config["logging"]["level"] = args.log_level
+            config["logging"]["level"] = args.log_level
 
         # Set up logging
         setup_logging(config)
