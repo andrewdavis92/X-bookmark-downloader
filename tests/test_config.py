@@ -215,10 +215,11 @@ logging:
         """Test that all valid tracking methods are accepted."""
         os.environ["TWITTER_BEARER_TOKEN"] = "token"
 
-        # Test local_logging method
-        os.environ["BOOKMARK_DOWNLOADER_STATE_MANAGEMENT_TRACKING_METHOD"] = "local_logging"
+        # Test that env var sets tracking_method to "bookmark_removal" (non-default, so we can
+        # confirm the env var actually took effect and wasn't just the default value)
+        os.environ["BOOKMARK_DOWNLOADER_STATE_MANAGEMENT_TRACKING_METHOD"] = "bookmark_removal"
         config = Config()
-        assert config["state_management"]["tracking_method"] in ["local_logging", "bookmark_removal", "hybrid"]
+        assert config["state_management"]["tracking_method"] == "bookmark_removal"
 
         # All valid methods should not raise errors
         for method in ["local_logging", "bookmark_removal", "hybrid"]:

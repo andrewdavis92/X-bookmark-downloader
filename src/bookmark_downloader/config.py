@@ -108,8 +108,11 @@ class Config:
 
         try:
             if filepath.endswith((".yaml", ".yml")):
-                with open(path, "r") as f:
-                    file_config = yaml.safe_load(f) or {}
+                try:
+                    with open(path, "r") as f:
+                        file_config = yaml.safe_load(f) or {}
+                except yaml.YAMLError as e:
+                    raise ValueError(f"Invalid YAML in config file: {e}") from e
             else:
                 raise ValueError(f"Unsupported config file format: {filepath}. Only YAML (.yaml/.yml) is supported.")
 
@@ -132,19 +135,18 @@ class Config:
         # First, handle BOOKMARK_DOWNLOADER_ prefixed variables
         for key, value in os.environ.items():
             if key.startswith("BOOKMARK_DOWNLOADER_"):
-                # Remove prefix and convert to lowercase
-                parts = key.replace("BOOKMARK_DOWNLOADER_", "").lower().split("_")
+                # Remove prefix; match against known sections to handle multi-word section names
+                rest = key[len("BOOKMARK_DOWNLOADER_"):]
 
-                # Build nested dict structure
-                if len(parts) >= 2:
-                    section = parts[0]
-                    key_name = "_".join(parts[1:])
-
-                    if section not in env_config:
-                        env_config[section] = {}
-
-                    # Try to convert value to appropriate type
-                    env_config[section][key_name] = Config._parse_env_value(value)
+                for section in config:
+                    section_prefix = section.upper() + "_"
+                    if rest.startswith(section_prefix):
+                        field = rest[len(section_prefix):].lower()
+                        if field in config[section]:
+                            if section not in env_config:
+                                env_config[section] = {}
+                            env_config[section][field] = Config._coerce(value)
+                        break
 
         # Also check for direct environment variables from .env
         if "TWITTER_BEARER_TOKEN" in os.environ:
@@ -157,23 +159,23 @@ class Config:
     @staticmethod
     def _parse_env_value(value: str) -> Any:
         """Parse environment variable value to appropriate type."""
-        # Handle boolean values
-        if value.lower() in ("true", "yes", "1"):
+        return Config._coerce(value)
+
+    @staticmethod
+    def _coerce(value: str) -> Any:
+        """Coerce a string value to the appropriate Python type."""
+        if value.lower() == "true":
             return True
-        if value.lower() in ("false", "no", "0"):
+        if value.lower() == "false":
             return False
-
-        # Handle integer values
-        if value.isdigit():
+        try:
             return int(value)
-
-        # Handle float values
+        except ValueError:
+            pass
         try:
             return float(value)
         except ValueError:
             pass
-
-        # Return as string
         return value
 
     @staticmethod
