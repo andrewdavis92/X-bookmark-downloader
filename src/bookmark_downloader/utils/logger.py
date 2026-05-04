@@ -26,11 +26,7 @@ class Logger:
         """
         logger = logging.getLogger("bookmark_downloader")
 
-        # Avoid duplicate handlers
-        if logger.handlers:
-            return logger
-
-        # Clear existing handlers
+        # Clear existing handlers (idempotent — prevents duplicates on repeated setup)
         logger.handlers.clear()
 
         # Set log level
