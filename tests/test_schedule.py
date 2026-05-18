@@ -166,6 +166,10 @@ class TestInstallScript:
         assert result.returncode != 0
 
 
+@pytest.mark.skipif(
+    not (REPO_ROOT / ".venv" / "bin" / "python3").exists(),
+    reason="requires .venv to be set up"
+)
 class TestUninstallScript:
     def test_uninstall_script_exists(self):
         assert UNINSTALL_SH.exists()
