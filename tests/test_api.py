@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from bookmark_downloader.api.auth import AuthManager, OAuth2PKCE, TokenStore
+from bookmark_downloader.api.auth import AuthManager, OAuth2PKCE, TokenStore, TwitterAuth
 from bookmark_downloader.api.twitter_client import (
     BookmarksResponse,
     IncludesData,
@@ -98,6 +98,40 @@ def sample_bookmark_response_paginated(sample_tweet: TweetData) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# TwitterAuth
+# ---------------------------------------------------------------------------
+
+
+class TestTwitterAuth:
+    """Test TwitterAuth bearer token authentication."""
+
+    def test_loads_bearer_token_from_config(self):
+        """TwitterAuth reads bearer_token from config["twitter"]["bearer_token"]."""
+        config = {"twitter": {"bearer_token": "my_token_123"}}
+        auth = TwitterAuth(config)
+        assert auth.get_bearer_token() == "my_token_123"
+
+    def test_get_headers_returns_authorization_header(self):
+        """get_headers returns {"Authorization": "Bearer <token>"}."""
+        config = {"twitter": {"bearer_token": "my_token_123"}}
+        auth = TwitterAuth(config)
+        headers = auth.get_headers()
+        assert headers == {"Authorization": "Bearer my_token_123"}
+
+    def test_raises_if_token_is_none(self):
+        """Raises ValueError when bearer_token is None."""
+        config = {"twitter": {"bearer_token": None}}
+        with pytest.raises(ValueError):
+            TwitterAuth(config)
+
+    def test_raises_if_token_is_placeholder(self):
+        """Raises ValueError when bearer_token is the placeholder string."""
+        config = {"twitter": {"bearer_token": "${TWITTER_BEARER_TOKEN}"}}
+        with pytest.raises(ValueError):
+            TwitterAuth(config)
+
+
+# ---------------------------------------------------------------------------
 # TwitterClient initialisation
 # ---------------------------------------------------------------------------
 
@@ -136,7 +170,7 @@ class TestTwitterClientInitialization:
 class TestGetBookmarks:
     """Test get_bookmarks (single-page fetch)."""
 
-    def test_get_bookmarks_single_page(self, sample_bookmark_response: dict):
+    def test_returns_tweet_list(self, sample_bookmark_response: dict):
         """Returns a BookmarksResponse with tweets and None next_token."""
         client = _make_client()
         mock_response = MagicMock()
@@ -149,9 +183,8 @@ class TestGetBookmarks:
 
         assert len(result["tweets"]) == 1
         assert result["tweets"][0]["id"] == "1234567890"
-        assert result["next_token"] is None
 
-    def test_get_bookmarks_with_pagination_token(self, sample_bookmark_response: dict):
+    def test_pagination_token_passed_when_provided(self, sample_bookmark_response: dict):
         """Passes pagination_token to the underlying XDK call when provided."""
         client = _make_client()
         mock_response = MagicMock()
@@ -165,20 +198,64 @@ class TestGetBookmarks:
         call_kwargs = client._client.get_users_id_bookmarks.call_args[1]
         assert call_kwargs.get("pagination_token") == "tok123"
 
-    def test_get_bookmarks_returns_next_token(self, sample_bookmark_response_paginated: dict):
-        """next_token is populated when the API response contains one."""
+    def test_next_token_none_on_last_page(self, sample_bookmark_response: dict):
+        """next_token is None when the API response has no next_token."""
         client = _make_client()
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = sample_bookmark_response_paginated
+        mock_response.json.return_value = sample_bookmark_response
         mock_response.headers = {}
         client._client.get_users_id_bookmarks.return_value = mock_response
 
         result = client.get_bookmarks(user_id="me")
 
-        assert result["next_token"] == "b26v89c19zqg8o3fpza0xpa6g55ombwfjhxbzrx4zzbe"
+        assert result["next_token"] is None
 
-    def test_get_bookmarks_raises_rate_limit_error(self):
+    def test_includes_media_in_response(self):
+        """Media items from includes are included in the response."""
+        client = _make_client()
+        raw = {
+            "data": [{"id": "1", "text": "t", "author_id": "u1", "attachments": {"media_keys": ["3_abc"]}}],
+            "includes": {
+                "media": [{"media_key": "3_abc", "type": "photo", "url": "https://example.com/img.jpg"}]
+            },
+            "meta": {},
+        }
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = raw
+        mock_response.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_response
+
+        result = client.get_bookmarks(user_id="me")
+
+        assert "media" in result["includes"]
+        assert len(result["includes"]["media"]) == 1
+        assert result["includes"]["media"][0]["media_key"] == "3_abc"
+
+    def test_includes_users_in_response(self):
+        """User items from includes are included in the response."""
+        client = _make_client()
+        raw = {
+            "data": [{"id": "1", "text": "t", "author_id": "u1"}],
+            "includes": {
+                "users": [{"id": "u1", "username": "testuser", "name": "Test User"}]
+            },
+            "meta": {},
+        }
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = raw
+        mock_response.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_response
+
+        result = client.get_bookmarks(user_id="me")
+
+        assert "users" in result["includes"]
+        assert len(result["includes"]["users"]) == 1
+        assert result["includes"]["users"][0]["username"] == "testuser"
+
+    def test_raises_rate_limit_error_on_429(self):
         """RateLimitError is raised on HTTP 429."""
         client = _make_client()
         mock_response = MagicMock()
@@ -189,7 +266,7 @@ class TestGetBookmarks:
         with pytest.raises(RateLimitError):
             client.get_bookmarks(user_id="me")
 
-    def test_get_bookmarks_raises_twitter_api_error(self):
+    def test_raises_api_error_on_non_2xx(self):
         """TwitterAPIError is raised on other non-2xx responses."""
         client = _make_client()
         mock_response = MagicMock()
@@ -202,6 +279,19 @@ class TestGetBookmarks:
             client.get_bookmarks(user_id="me")
 
         assert exc_info.value.status_code == 500
+
+    def test_get_bookmarks_returns_next_token(self, sample_bookmark_response_paginated: dict):
+        """next_token is populated when the API response contains one."""
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = sample_bookmark_response_paginated
+        mock_response.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_response
+
+        result = client.get_bookmarks(user_id="me")
+
+        assert result["next_token"] == "b26v89c19zqg8o3fpza0xpa6g55ombwfjhxbzrx4zzbe"
 
     def test_get_bookmarks_always_requests_required_fields(self):
         """get_bookmarks always sends the required expansions and fields."""
@@ -231,7 +321,7 @@ class TestGetBookmarks:
 class TestGetTweetDetails:
     """Test get_tweet_details."""
 
-    def test_returns_tweet_data_on_200(self):
+    def test_returns_tweet_data(self):
         """Returns TweetData on success."""
         client = _make_client()
         tweet = {"id": "123", "text": "hello", "author_id": "u1"}
@@ -347,6 +437,71 @@ class TestGetMe:
 
 
 # ---------------------------------------------------------------------------
+# TestRateLimit (spec-required consolidated class)
+# ---------------------------------------------------------------------------
+
+
+class TestRateLimit:
+    """Test rate-limit flag and reset behaviour (spec-required class)."""
+
+    def test_is_rate_limited_false_by_default(self):
+        """is_rate_limited() returns False before any API call."""
+        client = _make_client()
+        assert client.is_rate_limited() is False
+
+    def test_is_rate_limited_true_after_429(self):
+        """is_rate_limited() returns True after a 429 response."""
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_response
+
+        with pytest.raises(RateLimitError):
+            client.get_bookmarks(user_id="me")
+
+        assert client.is_rate_limited() is True
+
+    def test_is_rate_limited_false_after_success(self):
+        """is_rate_limited() resets to False after a successful 2xx response."""
+        client = _make_client()
+
+        # Trigger 429
+        mock_429 = MagicMock()
+        mock_429.status_code = 429
+        mock_429.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_429
+        with pytest.raises(RateLimitError):
+            client.get_bookmarks(user_id="me")
+        assert client.is_rate_limited() is True
+
+        # Succeed
+        mock_200 = MagicMock()
+        mock_200.status_code = 200
+        mock_200.json.return_value = {"data": [], "meta": {}}
+        mock_200.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_200
+        client.get_bookmarks(user_id="me")
+        assert client.is_rate_limited() is False
+
+    @patch("time.sleep")
+    @patch("time.time", return_value=1000)
+    def test_wait_for_rate_limit_reset_sleeps_until_reset(self, mock_time: Mock, mock_sleep: Mock):
+        """wait_for_rate_limit_reset sleeps until the stored reset_at timestamp."""
+        client = _make_client()
+        client._rate_limit_reset = 1060  # 60 seconds from now (mock time=1000)
+        client.wait_for_rate_limit_reset()
+        mock_sleep.assert_called_once_with(60)
+
+    @patch("time.sleep")
+    def test_wait_uses_default_900s_when_no_reset_timestamp(self, mock_sleep: Mock):
+        """wait_for_rate_limit_reset waits 900 seconds when no reset timestamp is stored."""
+        client = _make_client()
+        client.wait_for_rate_limit_reset()
+        mock_sleep.assert_called_once_with(900)
+
+
+# ---------------------------------------------------------------------------
 # is_rate_limited
 # ---------------------------------------------------------------------------
 
@@ -443,19 +598,19 @@ class TestExtractMediaUrls:
             staticmethod,
         )
 
-    def test_returns_empty_for_no_attachments(self, sample_tweet_no_media: TweetData):
+    def test_returns_empty_list_when_no_attachments(self, sample_tweet_no_media: TweetData):
         """Returns empty list when tweet has no attachments."""
         includes: IncludesData = {}
         result = TwitterClient.extract_media_urls(sample_tweet_no_media, includes)
         assert result == []
 
-    def test_returns_empty_when_media_key_not_in_includes(self, sample_tweet: TweetData):
+    def test_returns_empty_list_when_no_media_in_includes(self, sample_tweet: TweetData):
         """Returns empty list when media_keys don't match any entry in includes."""
         includes: IncludesData = {"media": []}
         result = TwitterClient.extract_media_urls(sample_tweet, includes)
         assert result == []
 
-    def test_extracts_photo_url(self):
+    def test_photo_url_extracted(self):
         """Extracts url directly for photo type."""
         tweet: TweetData = {
             "id": "1",
@@ -474,7 +629,7 @@ class TestExtractMediaUrls:
         assert result[0]["type"] == "photo"
         assert result[0]["media_key"] == "3_abc"
 
-    def test_extracts_video_highest_bitrate(self):
+    def test_video_selects_highest_bitrate_variant(self):
         """Selects variant with highest bit_rate for video type."""
         tweet: TweetData = {
             "id": "1",
@@ -500,7 +655,7 @@ class TestExtractMediaUrls:
         assert result[0]["url"] == "https://high.mp4"
         assert result[0]["type"] == "video"
 
-    def test_extracts_animated_gif(self):
+    def test_animated_gif_extracted(self):
         """Extracts URL for animated_gif type."""
         tweet: TweetData = {
             "id": "1",
