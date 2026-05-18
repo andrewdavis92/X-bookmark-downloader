@@ -44,13 +44,13 @@ cd x-bookmark-downloader
 
 2. Create a virtual environment:
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
 3. Install dependencies:
 ```bash
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ### Configuration
@@ -111,7 +111,57 @@ Configuration is loaded in the following priority order (highest to lowest):
 4. **.env file** (python-dotenv)
 5. **Hardcoded defaults** (built into the application)
 
-### Usage
+## Scheduling (macOS launchd)
+
+Run the downloader automatically 3× daily (6 AM, 2 PM, 10 PM) using macOS launchd.
+
+### Install
+
+```bash
+# Install as a launchd agent (uses .venv/bin/python3 and config.yaml by default)
+bash schedule/install.sh
+
+# Install with a custom config path
+bash schedule/install.sh --config /path/to/config.yaml
+```
+
+### Verify
+
+```bash
+launchctl list | grep bookmark-downloader
+```
+
+### Run immediately
+
+After installation, trigger a run without waiting for the next scheduled time:
+
+```bash
+launchctl start com.user.bookmark-downloader
+```
+
+### View logs
+
+> **Note:** launchd log output always goes to `~/Library/Logs/bookmark-downloader/` regardless of `logs_directory` in your config file.
+
+```bash
+# Standard output (download progress, stats)
+tail -f ~/Library/Logs/bookmark-downloader/launchd.out.log
+
+# Standard error (warnings, errors)
+tail -f ~/Library/Logs/bookmark-downloader/launchd.err.log
+```
+
+### Uninstall
+
+```bash
+bash schedule/uninstall.sh
+```
+
+### Change the schedule
+
+Edit `schedule/com.user.bookmark-downloader.plist`, update the `StartCalendarInterval` hours, then re-run `bash schedule/install.sh`.
+
+## Usage
 
 ```bash
 # Download bookmarks (main functionality)
