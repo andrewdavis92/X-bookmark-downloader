@@ -111,6 +111,52 @@ Configuration is loaded in the following priority order (highest to lowest):
 4. **.env file** (python-dotenv)
 5. **Hardcoded defaults** (built into the application)
 
+## Scheduling (macOS launchd)
+
+Run the downloader automatically 3× daily (6 AM, 2 PM, 10 PM) using macOS launchd.
+
+### Install
+
+```bash
+# Install as a launchd agent (uses .venv/bin/python3 and config.yaml by default)
+bash schedule/install.sh
+
+# Install with a custom config path
+bash schedule/install.sh --config /path/to/config.yaml
+```
+
+### Verify
+
+```bash
+launchctl list | grep bookmark-downloader
+```
+
+### Run immediately
+
+```bash
+launchctl start com.user.bookmark-downloader
+```
+
+### View logs
+
+```bash
+# Standard output (download progress, stats)
+tail -f ~/Library/Logs/bookmark-downloader/launchd.out.log
+
+# Standard error (warnings, errors)
+tail -f ~/Library/Logs/bookmark-downloader/launchd.err.log
+```
+
+### Uninstall
+
+```bash
+bash schedule/uninstall.sh
+```
+
+### Change the schedule
+
+Edit `schedule/com.user.bookmark-downloader.plist`, update the `StartCalendarInterval` hours, then re-run `bash schedule/install.sh`.
+
 ### Usage
 
 ```bash
