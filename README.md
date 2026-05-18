@@ -133,11 +133,15 @@ launchctl list | grep bookmark-downloader
 
 ### Run immediately
 
+After installation, trigger a run without waiting for the next scheduled time:
+
 ```bash
 launchctl start com.user.bookmark-downloader
 ```
 
 ### View logs
+
+> **Note:** launchd log output always goes to `~/Library/Logs/bookmark-downloader/` regardless of `logs_directory` in your config file.
 
 ```bash
 # Standard output (download progress, stats)
