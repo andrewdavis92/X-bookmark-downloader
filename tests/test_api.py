@@ -122,21 +122,6 @@ class TestTwitterClientInitialization:
                 mock_auth.get_bearer_token.assert_called_once()
                 mock_xdk.assert_called_once()
 
-    def test_client_reads_request_timeout(self):
-        """TwitterClient must read request_timeout from config."""
-        config = _make_config()
-        config["twitter"]["request_timeout"] = 45
-        with patch("xdk.client.Client"):
-            with patch(
-                "bookmark_downloader.api.twitter_client.TwitterAuth"
-            ) as mock_auth_cls:
-                mock_auth = MagicMock()
-                mock_auth.get_bearer_token.return_value = "tok"
-                mock_auth_cls.return_value = mock_auth
-                client = TwitterClient(config)
-
-        assert client._timeout == 45
-
     def test_client_init_is_rate_limited_false(self):
         """is_rate_limited() must return False after initialization."""
         client = _make_client()
@@ -272,6 +257,29 @@ class TestGetTweetDetails:
         result = client.get_tweet_details("deleted_tweet_id")
 
         assert result is None
+
+    def test_404_clears_is_rate_limited(self):
+        """A 404 response clears the is_rate_limited flag."""
+        client = _make_client()
+
+        # First trigger a 429
+        mock_429 = MagicMock()
+        mock_429.status_code = 429
+        mock_429.headers = {}
+        client._client.get_tweets_id.return_value = mock_429
+        with pytest.raises(RateLimitError):
+            client.get_tweet_details("some_id")
+        assert client.is_rate_limited() is True
+
+        # Now get a 404 — should clear the flag
+        mock_404 = MagicMock()
+        mock_404.status_code = 404
+        mock_404.headers = {}
+        client._client.get_tweets_id.return_value = mock_404
+        result = client.get_tweet_details("deleted_tweet_id")
+
+        assert result is None
+        assert client.is_rate_limited() is False
 
     def test_raises_rate_limit_error_on_429(self):
         """RateLimitError raised on HTTP 429."""

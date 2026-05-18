@@ -114,7 +114,6 @@ class TwitterClient:
         Initialize Twitter API client.
 
         Creates a TwitterAuth instance internally from config.
-        Reads request timeout from config["twitter"]["request_timeout"].
 
         Args:
             config: Application configuration object.
@@ -126,7 +125,6 @@ class TwitterClient:
 
         auth = TwitterAuth(config)
         bearer_token = auth.get_bearer_token()
-        self._timeout: int = config["twitter"]["request_timeout"]
 
         self._client = xdk_client.Client(
             bearer_token=bearer_token,
@@ -138,34 +136,27 @@ class TwitterClient:
     # Private helpers
     # ------------------------------------------------------------------
 
+    def _parse_reset_header(self, response) -> Optional[int]:  # type: ignore[type-arg]
+        """Return the X-RateLimit-Reset header value as an int, or None."""
+        try:
+            return int(response.headers.get("X-RateLimit-Reset", ""))
+        except (ValueError, TypeError):
+            return None
+
     def _update_rate_limit_headers(self, response) -> None:  # type: ignore[type-arg]
         """Read X-RateLimit-* headers from a response and update internal state."""
-        try:
-            if hasattr(response, "headers"):
-                headers = response.headers
-                reset_val = headers.get("X-RateLimit-Reset") or headers.get("x-ratelimit-reset")
-                if reset_val:
-                    self._rate_limit_reset = int(reset_val)
-        except (ValueError, TypeError, AttributeError):
-            pass
+        reset = self._parse_reset_header(response)
+        if reset is not None:
+            self._rate_limit_reset = reset
 
     def _raise_for_status(self, response) -> None:  # type: ignore[type-arg]
         """Raise TwitterAPIError subclasses for non-2xx responses."""
         status = response.status_code
         if status == 429:
             self._is_rate_limited = True
-            reset_at: Optional[int] = None
-            try:
-                if hasattr(response, "headers"):
-                    val = (
-                        response.headers.get("X-RateLimit-Reset")
-                        or response.headers.get("x-ratelimit-reset")
-                    )
-                    if val:
-                        reset_at = int(val)
-                        self._rate_limit_reset = reset_at
-            except (ValueError, TypeError, AttributeError):
-                pass
+            reset_at = self._parse_reset_header(response)
+            if reset_at is not None:
+                self._rate_limit_reset = reset_at
             raise RateLimitError(reset_at=reset_at)
         if status >= 400:
             raise TwitterAPIError(
@@ -260,6 +251,7 @@ class TwitterClient:
         response = self._client.get_tweets_id(id=tweet_id, **params)
 
         if response.status_code == 404:
+            self._is_rate_limited = False
             return None
 
         self._raise_for_status(response)
