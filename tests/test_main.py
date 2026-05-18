@@ -596,3 +596,192 @@ class TestProcessTweet:
         assert folder.exists()
 
         state.close()
+
+
+class TestDownloadBookmarks:
+    """Tests for the download_bookmarks orchestration loop."""
+
+    def _make_bookmark_response(self, tweet_id="1", next_token=None):
+        """Return a BookmarksResponse-like dict with one tweet."""
+        return {
+            "tweets": [{"id": tweet_id, "text": "hi", "author_id": "u1"}],
+            "includes": {"users": [{"id": "u1", "username": "alice", "name": "Alice"}]},
+            "next_token": next_token,
+        }
+
+    def test_download_single_bookmark(self, tmp_path):
+        from bookmark_downloader.main import download_bookmarks
+
+        config = _make_config_with_paths(tmp_path)
+
+        with patch("bookmark_downloader.main.TwitterClient") as MockTC, \
+             patch("bookmark_downloader.main.StateManager") as MockSM, \
+             patch("bookmark_downloader.main.LocalStorage"), \
+             patch("bookmark_downloader.main.QuarantineManager"), \
+             patch("bookmark_downloader.main._process_tweet", return_value=0) as mock_pt:
+
+            tc_inst = MockTC.return_value
+            tc_inst.get_me.return_value = {"id": "u1", "username": "alice", "name": "Alice"}
+            tc_inst.get_bookmarks.return_value = self._make_bookmark_response()
+
+            sm_inst = MockSM.return_value
+            sm_inst.is_already_processed.return_value = False
+
+            result = download_bookmarks(config)
+
+        assert result is True
+        mock_pt.assert_called_once()
+
+    def test_download_skips_already_processed(self, tmp_path):
+        from bookmark_downloader.main import download_bookmarks
+
+        config = _make_config_with_paths(tmp_path)
+
+        with patch("bookmark_downloader.main.TwitterClient") as MockTC, \
+             patch("bookmark_downloader.main.StateManager") as MockSM, \
+             patch("bookmark_downloader.main.LocalStorage"), \
+             patch("bookmark_downloader.main.QuarantineManager"), \
+             patch("bookmark_downloader.main._process_tweet") as mock_pt:
+
+            tc_inst = MockTC.return_value
+            tc_inst.get_me.return_value = {"id": "u1", "username": "alice", "name": "Alice"}
+            tc_inst.get_bookmarks.return_value = self._make_bookmark_response()
+
+            sm_inst = MockSM.return_value
+            sm_inst.is_already_processed.return_value = True
+
+            download_bookmarks(config)
+
+        mock_pt.assert_not_called()
+
+    def test_download_respects_limit(self, tmp_path):
+        from bookmark_downloader.main import download_bookmarks
+
+        config = _make_config_with_paths(tmp_path)
+
+        with patch("bookmark_downloader.main.TwitterClient") as MockTC, \
+             patch("bookmark_downloader.main.StateManager") as MockSM, \
+             patch("bookmark_downloader.main.LocalStorage"), \
+             patch("bookmark_downloader.main.QuarantineManager"):
+
+            tc_inst = MockTC.return_value
+            tc_inst.get_me.return_value = {"id": "u1", "username": "alice", "name": "Alice"}
+            tc_inst.get_bookmarks.return_value = {
+                "tweets": [
+                    {"id": "1", "text": "a", "author_id": "u1"},
+                    {"id": "2", "text": "b", "author_id": "u1"},
+                    {"id": "3", "text": "c", "author_id": "u1"},
+                ],
+                "includes": {"users": [{"id": "u1", "username": "alice", "name": "Alice"}]},
+                "next_token": None,
+            }
+
+            sm_inst = MockSM.return_value
+            sm_inst.is_already_processed.return_value = False
+
+            with patch("bookmark_downloader.main._process_tweet", return_value=0) as mock_pt:
+                download_bookmarks(config, limit=2)
+
+            assert mock_pt.call_count == 2
+
+    def test_download_quarantines_failed_tweet(self, tmp_path):
+        from bookmark_downloader.main import download_bookmarks
+
+        config = _make_config_with_paths(tmp_path)
+
+        with patch("bookmark_downloader.main.TwitterClient") as MockTC, \
+             patch("bookmark_downloader.main.StateManager") as MockSM, \
+             patch("bookmark_downloader.main.LocalStorage"), \
+             patch("bookmark_downloader.main.QuarantineManager"), \
+             patch("bookmark_downloader.main._process_tweet", side_effect=ValueError("bad")), \
+             patch("bookmark_downloader.main._quarantine_tweet") as mock_q:
+
+            tc_inst = MockTC.return_value
+            tc_inst.get_me.return_value = {"id": "u1", "username": "alice", "name": "Alice"}
+            tc_inst.get_bookmarks.return_value = self._make_bookmark_response()
+
+            sm_inst = MockSM.return_value
+            sm_inst.is_already_processed.return_value = False
+
+            result = download_bookmarks(config)
+
+        assert result is True
+        mock_q.assert_called_once()
+
+    def test_download_handles_rate_limit_and_retries(self, tmp_path):
+        from bookmark_downloader.main import download_bookmarks
+        from bookmark_downloader.api.twitter_client import RateLimitError
+
+        config = _make_config_with_paths(tmp_path)
+
+        with patch("bookmark_downloader.main.TwitterClient") as MockTC, \
+             patch("bookmark_downloader.main.StateManager") as MockSM, \
+             patch("bookmark_downloader.main.LocalStorage"), \
+             patch("bookmark_downloader.main.QuarantineManager"):
+
+            tc_inst = MockTC.return_value
+            tc_inst.get_me.return_value = {"id": "u1", "username": "alice", "name": "Alice"}
+            tc_inst.get_bookmarks.side_effect = [
+                RateLimitError(),
+                {"tweets": [], "includes": {}, "next_token": None},
+            ]
+
+            sm_inst = MockSM.return_value
+            sm_inst.is_already_processed.return_value = False
+
+            result = download_bookmarks(config)
+
+        assert result is True
+        tc_inst.wait_for_rate_limit_reset.assert_called_once()
+
+    def test_download_paginates_until_no_next_token(self, tmp_path):
+        from bookmark_downloader.main import download_bookmarks
+
+        config = _make_config_with_paths(tmp_path)
+
+        with patch("bookmark_downloader.main.TwitterClient") as MockTC, \
+             patch("bookmark_downloader.main.StateManager") as MockSM, \
+             patch("bookmark_downloader.main.LocalStorage"), \
+             patch("bookmark_downloader.main.QuarantineManager"), \
+             patch("bookmark_downloader.main._process_tweet", return_value=0) as mock_pt:
+
+            tc_inst = MockTC.return_value
+            tc_inst.get_me.return_value = {"id": "u1", "username": "alice", "name": "Alice"}
+            tc_inst.get_bookmarks.side_effect = [
+                {"tweets": [{"id": "1", "text": "a", "author_id": "u1"}],
+                 "includes": {"users": [{"id": "u1", "username": "alice", "name": "Alice"}]},
+                 "next_token": "tok2"},
+                {"tweets": [{"id": "2", "text": "b", "author_id": "u1"}],
+                 "includes": {"users": [{"id": "u1", "username": "alice", "name": "Alice"}]},
+                 "next_token": None},
+            ]
+
+            sm_inst = MockSM.return_value
+            sm_inst.is_already_processed.return_value = False
+
+            download_bookmarks(config)
+
+        assert mock_pt.call_count == 2
+
+    def test_download_dry_run_mode(self, tmp_path):
+        from bookmark_downloader.main import download_bookmarks
+
+        config = _make_config_with_paths(tmp_path)
+
+        with patch("bookmark_downloader.main.TwitterClient") as MockTC, \
+             patch("bookmark_downloader.main.StateManager") as MockSM, \
+             patch("bookmark_downloader.main.LocalStorage"), \
+             patch("bookmark_downloader.main.QuarantineManager"), \
+             patch("bookmark_downloader.main._process_tweet", return_value=0) as mock_pt:
+
+            tc_inst = MockTC.return_value
+            tc_inst.get_me.return_value = {"id": "u1", "username": "alice", "name": "Alice"}
+            tc_inst.get_bookmarks.return_value = self._make_bookmark_response()
+
+            sm_inst = MockSM.return_value
+            sm_inst.is_already_processed.return_value = False
+
+            download_bookmarks(config, dry_run=True)
+
+        call_kwargs = mock_pt.call_args[1]
+        assert call_kwargs.get("dry_run") is True

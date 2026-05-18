@@ -224,6 +224,23 @@ def verify_setup(config) -> bool:
         return False
 
 
+def _quarantine_tweet(
+    tweet_id: str,
+    tweet_data: Dict,
+    includes: Dict,
+    exc: Exception,
+    quarantine_manager: QuarantineManager,
+    state: StateManager,
+) -> None:
+    """Quarantine a failed tweet, storing tweet+includes context for retry."""
+    logger = get_logger(__name__)
+    category = classify_error(exc)
+    context = {"tweet": tweet_data, "includes": includes}
+    quarantine_manager.quarantine_item(tweet_id, context, exc, category)
+    state.mark_quarantined(tweet_id, str(exc))
+    logger.warning("Quarantined tweet %s (%s): %s", tweet_id, category.value, exc)
+
+
 def download_bookmarks(config, limit: Optional[int] = None, dry_run: bool = False) -> bool:
     """Download bookmarks from X.
 
@@ -237,24 +254,114 @@ def download_bookmarks(config, limit: Optional[int] = None, dry_run: bool = Fals
     """
     logger = get_logger(__name__)
 
+    global _shutdown_requested
+    _shutdown_requested = False
+    old_sigterm = signal.signal(signal.SIGTERM, _handle_shutdown_signal)
+    old_sigint = signal.signal(signal.SIGINT, _handle_shutdown_signal)
+
     try:
-        logger.info("Starting bookmark download...")
+        api_client = TwitterClient(config)
+        state = StateManager(config)
+        storage = LocalStorage(config)
+        quarantine_manager = QuarantineManager(config)
+
+        me = api_client.get_me()
+        user_id = me["id"]
+        logger.info("Authenticated as @%s (id=%s)", me.get("username", "?"), user_id)
 
         if dry_run:
-            logger.info("DRY RUN mode - no files will be downloaded")
-
+            logger.info("DRY RUN mode — no files will be written")
         if limit:
-            logger.info(f"Processing up to {limit} bookmarks")
+            logger.info("Processing up to %d bookmarks", limit)
 
-        # TODO: Implement actual download logic in Phase 2+
-        logger.warning("Download functionality not yet implemented")
-        logger.info("This will be implemented in Phase 2-8")
+        processed = 0
+        skipped = 0
+        failed = 0
+        pagination_token: Optional[str] = None
 
+        while not _shutdown_requested:
+            batch_size = min(100, limit - processed) if limit else 100
+
+            try:
+                response = api_client.get_bookmarks(
+                    user_id,
+                    max_results=batch_size,
+                    pagination_token=pagination_token,
+                )
+            except RateLimitError:
+                api_client.wait_for_rate_limit_reset()
+                continue
+
+            tweets = response.get("tweets") or []
+            includes = response.get("includes") or {}
+
+            if not tweets:
+                logger.info("No more bookmarks to process.")
+                break
+
+            for tweet in tweets:
+                if _shutdown_requested:
+                    break
+                if limit is not None and processed >= limit:
+                    break
+
+                tweet_id = tweet["id"]
+
+                if state.is_already_processed(tweet_id):
+                    skipped += 1
+                    logger.debug("Skipping already processed tweet %s", tweet_id)
+                    continue
+
+                try:
+                    media_count = _process_tweet(
+                        tweet, includes, api_client, storage, state, config, dry_run=dry_run
+                    )
+                    processed += 1
+                    logger.info(
+                        "Processed tweet %s (%d media)", tweet_id, media_count
+                    )
+                except RateLimitError:
+                    api_client.wait_for_rate_limit_reset()
+                    try:
+                        media_count = _process_tweet(
+                            tweet, includes, api_client, storage, state, config, dry_run=dry_run
+                        )
+                        processed += 1
+                    except Exception as retry_exc:
+                        _quarantine_tweet(
+                            tweet_id, tweet, includes, retry_exc,
+                            quarantine_manager, state
+                        )
+                        failed += 1
+                except Exception as exc:
+                    _quarantine_tweet(
+                        tweet_id, tweet, includes, exc,
+                        quarantine_manager, state
+                    )
+                    failed += 1
+
+            pagination_token = response.get("next_token")
+            if not pagination_token:
+                break
+
+        logger.info(
+            "Download complete: %d processed, %d skipped, %d failed",
+            processed, skipped, failed,
+        )
+        print(f"\nDownload summary:")
+        print(f"  Processed: {processed}")
+        print(f"  Skipped:   {skipped}")
+        print(f"  Failed:    {failed}")
+
+        state.close()
         return True
 
     except Exception as e:
         logger.error(f"Download failed: {e}", exc_info=True)
         return False
+    finally:
+        signal.signal(signal.SIGTERM, old_sigterm)
+        signal.signal(signal.SIGINT, old_sigint)
 
 
 def show_stats(config) -> bool:
