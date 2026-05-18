@@ -419,3 +419,19 @@ class TestMarkProcessedWithAuthorInfo:
         bookmark = state_manager._db._get_bookmark("tweet1")
         assert bookmark is not None
         assert bookmark["status"] == "success"
+
+    def test_mark_processed_preserves_author_on_second_call(self, state_manager):
+        # First call sets author info on INSERT
+        state_manager.mark_processed(
+            "tweet1", "success", ["/path"], 1,
+            author_username="alice", author_id="111"
+        )
+        # Second call with different author info — UPDATE path ignores author fields
+        state_manager.mark_processed(
+            "tweet1", "success", ["/path2"], 2,
+            author_username="other", author_id="999"
+        )
+        bookmark = state_manager._db._get_bookmark("tweet1")
+        # Original author preserved because _upsert_bookmark protects identity fields on update
+        assert bookmark["author_username"] == "alice"
+        assert bookmark["author_id"] == "111"
