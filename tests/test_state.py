@@ -346,3 +346,44 @@ def test_clear_old_entries_returns_count(state_manager):
     state_manager._db._conn.commit()
     removed = state_manager.clear_old_entries(days=90)
     assert removed == 3
+
+
+def test_mark_quarantined_sets_status(state_manager):
+    state_manager.mark_quarantined("tweet_q1", "tweet deleted", retry_count=0)
+    bookmark = state_manager._db._get_bookmark("tweet_q1")
+    assert bookmark["status"] == "quarantined"
+
+
+def test_mark_quarantined_stores_error(state_manager):
+    state_manager.mark_quarantined("tweet_q2", "access denied", retry_count=3)
+    bookmark = state_manager._db._get_bookmark("tweet_q2")
+    assert bookmark["last_error"] == "access denied"
+    assert bookmark["retry_count"] == 3
+
+
+def test_get_quarantined_bookmarks_returns_rows(state_manager):
+    state_manager.mark_quarantined("tweet_q3", "error a")
+    state_manager.mark_failed("tweet_f1", "error b")
+    state_manager.mark_processed("tweet_s1", "success", [], 0)
+    rows = state_manager.get_quarantined_bookmarks()
+    ids = [r["tweet_id"] for r in rows]
+    assert "tweet_q3" in ids
+    assert "tweet_f1" not in ids
+    assert "tweet_s1" not in ids
+
+
+def test_get_quarantined_bookmarks_limit(state_manager):
+    for i in range(5):
+        state_manager.mark_quarantined(f"tweet_lim_{i}", "error")
+    rows = state_manager.get_quarantined_bookmarks(limit=3)
+    assert len(rows) == 3
+
+
+def test_mark_quarantined_logs_history(state_manager):
+    state_manager.mark_quarantined("tweet_q4", "deleted tweet")
+    cursor = state_manager._db._conn.execute(
+        "SELECT action, details FROM processing_history WHERE tweet_id = 'tweet_q4'"
+    )
+    row = cursor.fetchone()
+    assert row["action"] == "quarantined"
+    assert row["details"] == "deleted tweet"

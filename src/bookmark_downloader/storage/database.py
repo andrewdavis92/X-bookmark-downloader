@@ -69,7 +69,7 @@ _SQL_PROCESSING_HISTORY = """
 CREATE TABLE IF NOT EXISTS processing_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tweet_id TEXT NOT NULL,
-    action TEXT CHECK(action IN ('processed', 'skipped', 'failed', 'retried')),
+    action TEXT CHECK(action IN ('processed', 'skipped', 'failed', 'retried', 'quarantined')),
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     details TEXT
 );
@@ -192,6 +192,30 @@ class StateManager:
             retry_count=retry_count,
         )
         self._db._log_history(tweet_id, "failed", error)
+
+    def mark_quarantined(
+        self,
+        tweet_id: str,
+        error: str,
+        retry_count: int = 0,
+    ) -> None:
+        self._db._upsert_bookmark(
+            tweet_id,
+            status="quarantined",
+            last_error=error,
+            retry_count=retry_count,
+        )
+        self._db._log_history(tweet_id, "quarantined", error)
+
+    def get_quarantined_bookmarks(self, limit: int = 100) -> List[Dict]:
+        cursor = self._db._conn.execute(
+            """SELECT * FROM bookmarks
+               WHERE status = 'quarantined'
+               ORDER BY updated_at DESC
+               LIMIT ?""",
+            (limit,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
 
     def update_status(
         self,

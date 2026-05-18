@@ -10,6 +10,25 @@ import pytest
 from bookmark_downloader.main import main, verify_setup
 
 
+def _make_config_with_paths(tmp_path):
+    """Return a minimal Config-like object pointing to tmp_path."""
+    from unittest.mock import MagicMock
+    from pathlib import Path
+
+    config = MagicMock()
+    config.__getitem__ = MagicMock(side_effect=lambda k: {
+        "twitter": {"bearer_token": "tok", "request_timeout": 30},
+        "download": {"timeout_seconds": 60, "max_workers": 1},
+        "processing": {"follow_quotes": True},
+        "logging": {"level": "INFO"},
+    }[k])
+    config.get_downloads_dir.return_value = tmp_path / "downloads"
+    config.get_logs_dir.return_value = tmp_path / "logs"
+    config.get_database_path.return_value = tmp_path / "state.db"
+    config.get_quarantine_dir.return_value = tmp_path / "quarantine"
+    return config
+
+
 class TestVerifySetup:
     """Test verify_setup function."""
 
@@ -286,3 +305,92 @@ class TestClearCacheCommand:
                 exit_code = main()
 
             assert exit_code == 0
+
+
+class TestShowStats:
+    def test_show_stats_prints_stats(self, capsys, tmp_path):
+        """show_stats prints counts from StateManager."""
+        from bookmark_downloader.main import show_stats
+        from bookmark_downloader.storage.database import ProcessingStats
+
+        config = _make_config_with_paths(tmp_path)
+        with patch("bookmark_downloader.main.StateManager") as MockSM:
+            instance = MockSM.return_value
+            instance.get_processing_stats.return_value = ProcessingStats(
+                total_processed=42,
+                total_failed=3,
+                total_quarantined=1,
+                total_media_downloaded=87,
+                last_run_at="2026-05-17T10:23:00",
+            )
+            result = show_stats(config)
+
+        assert result is True
+        out = capsys.readouterr().out
+        assert "42" in out
+        assert "87" in out
+        assert "2026-05-17T10:23:00" in out
+
+    def test_show_stats_no_last_run(self, capsys, tmp_path):
+        from bookmark_downloader.main import show_stats
+        from bookmark_downloader.storage.database import ProcessingStats
+
+        config = _make_config_with_paths(tmp_path)
+        with patch("bookmark_downloader.main.StateManager") as MockSM:
+            instance = MockSM.return_value
+            instance.get_processing_stats.return_value = ProcessingStats(
+                total_processed=0,
+                total_failed=0,
+                total_quarantined=0,
+                total_media_downloaded=0,
+                last_run_at=None,
+            )
+            result = show_stats(config)
+
+        assert result is True
+        assert "never" in capsys.readouterr().out
+
+    def test_show_stats_returns_false_on_error(self, tmp_path):
+        from bookmark_downloader.main import show_stats
+
+        config = _make_config_with_paths(tmp_path)
+        with patch("bookmark_downloader.main.StateManager") as MockSM:
+            MockSM.side_effect = RuntimeError("db exploded")
+            result = show_stats(config)
+
+        assert result is False
+
+
+class TestClearCache:
+    def test_clear_cache_returns_true_and_prints_count(self, capsys, tmp_path):
+        from bookmark_downloader.main import clear_cache
+
+        config = _make_config_with_paths(tmp_path)
+        with patch("bookmark_downloader.main.StateManager") as MockSM:
+            instance = MockSM.return_value
+            instance.clear_old_entries.return_value = 5
+            result = clear_cache(config, older_than_days=90)
+
+        assert result is True
+        assert "5" in capsys.readouterr().out
+
+    def test_clear_cache_passes_days_to_state_manager(self, tmp_path):
+        from bookmark_downloader.main import clear_cache
+
+        config = _make_config_with_paths(tmp_path)
+        with patch("bookmark_downloader.main.StateManager") as MockSM:
+            instance = MockSM.return_value
+            instance.clear_old_entries.return_value = 0
+            clear_cache(config, older_than_days=30)
+
+        instance.clear_old_entries.assert_called_once_with(days=30)
+
+    def test_clear_cache_returns_false_on_error(self, tmp_path):
+        from bookmark_downloader.main import clear_cache
+
+        config = _make_config_with_paths(tmp_path)
+        with patch("bookmark_downloader.main.StateManager") as MockSM:
+            MockSM.side_effect = RuntimeError("boom")
+            result = clear_cache(config, older_than_days=90)
+
+        assert result is False

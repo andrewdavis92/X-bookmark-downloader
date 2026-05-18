@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
-from bookmark_downloader.config import get_config
+from bookmark_downloader.config import Config, get_config
 from bookmark_downloader.utils.logger import get_logger
 
 from .types import EncryptedToken, OAuthTokenResponse
@@ -561,3 +561,35 @@ class AuthManager:
 
         logger.info("OAuth authentication successful")
         return token_response["access_token"]
+
+
+class TwitterAuth:
+    """Bearer token authentication for the X API."""
+
+    PLACEHOLDER = "${TWITTER_BEARER_TOKEN}"
+
+    def __init__(self, config: Config) -> None:
+        """
+        Initialize Twitter bearer token authentication.
+
+        Args:
+            config: Application configuration object.
+
+        Raises:
+            ValueError: If bearer_token is None or the placeholder string.
+        """
+        token = config["twitter"]["bearer_token"]
+        if token is None or token == self.PLACEHOLDER:
+            raise ValueError(
+                "twitter.bearer_token is not set. "
+                "Replace the placeholder in config.yaml with a real bearer token."
+            )
+        self._bearer_token: str = token
+
+    def get_bearer_token(self) -> str:
+        """Return the bearer token string."""
+        return self._bearer_token
+
+    def get_headers(self) -> Dict[str, str]:
+        """Return HTTP headers for bearer token authentication."""
+        return {"Authorization": f"Bearer {self._bearer_token}"}

@@ -1,17 +1,67 @@
 """Tests for X API client using official XDK."""
 
-import json
 import time
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from bookmark_downloader.api.auth import AuthManager, OAuth2PKCE, TokenStore
-from bookmark_downloader.api.twitter_client import RateLimitError, TwitterClient
-from bookmark_downloader.api.types import TweetData
+from bookmark_downloader.api.auth import AuthManager, OAuth2PKCE, TokenStore, TwitterAuth
+from bookmark_downloader.api.twitter_client import (
+    BookmarksResponse,
+    IncludesData,
+    MediaData,
+    MediaUrl,
+    MediaVariant,
+    RateLimitError,
+    TweetData,
+    TwitterAPIError,
+    TwitterClient,
+    UserData,
+)
 
 
-# Test fixtures
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_config(bearer_token: str = "test_bearer_token") -> dict:
+    """Return a minimal config dict accepted by TwitterClient."""
+    return {
+        "twitter": {
+            "bearer_token": bearer_token,
+            "request_timeout": 30,
+        },
+        "paths": {
+            "logs_directory": "/tmp",
+        },
+    }
+
+
+def _make_client(bearer_token: str = "test_bearer_token") -> TwitterClient:
+    """Create a TwitterClient with all external dependencies patched.
+
+    The patch context exits before this function returns, so the patches are no
+    longer active when test bodies run.  That is intentional and safe: the
+    xdk.client.Client patch only needs to be live during __init__ so that
+    client._client is assigned a MagicMock.  Tests then configure that mock
+    directly (e.g. ``client._client.get_users_id_bookmarks.return_value = …``).
+    The constructor is never called again, so the expired patch causes no harm.
+    """
+    config = _make_config(bearer_token)
+    with patch("xdk.client.Client"):
+        with patch(
+            "bookmark_downloader.api.twitter_client.TwitterAuth"
+        ) as mock_auth_cls:
+            mock_auth = MagicMock()
+            mock_auth.get_bearer_token.return_value = bearer_token
+            mock_auth_cls.return_value = mock_auth
+            return TwitterClient(config)
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -39,7 +89,7 @@ def sample_tweet_no_media() -> TweetData:
 
 @pytest.fixture
 def sample_bookmark_response(sample_tweet: TweetData) -> dict:
-    """Sample bookmarks API response."""
+    """Sample bookmarks API response (raw JSON)."""
     return {
         "data": [sample_tweet],
         "meta": {"result_count": 1},
@@ -55,296 +105,571 @@ def sample_bookmark_response_paginated(sample_tweet: TweetData) -> dict:
     }
 
 
-@pytest.fixture
-def twitter_client() -> TwitterClient:
-    """Initialize test Twitter client with mocked XDK."""
-    with patch("xdk.client.Client"):
-        return TwitterClient(access_token="test_token_12345")
+# ---------------------------------------------------------------------------
+# TwitterAuth
+# ---------------------------------------------------------------------------
 
 
-# Twitter Client Tests
+class TestTwitterAuth:
+    """Test TwitterAuth bearer token authentication."""
+
+    def test_loads_bearer_token_from_config(self):
+        """TwitterAuth reads bearer_token from config["twitter"]["bearer_token"]."""
+        config = {"twitter": {"bearer_token": "my_token_123"}}
+        auth = TwitterAuth(config)
+        assert auth.get_bearer_token() == "my_token_123"
+
+    def test_get_headers_returns_authorization_header(self):
+        """get_headers returns {"Authorization": "Bearer <token>"}."""
+        config = {"twitter": {"bearer_token": "my_token_123"}}
+        auth = TwitterAuth(config)
+        headers = auth.get_headers()
+        assert headers == {"Authorization": "Bearer my_token_123"}
+
+    def test_raises_if_token_is_none(self):
+        """Raises ValueError when bearer_token is None."""
+        config = {"twitter": {"bearer_token": None}}
+        with pytest.raises(ValueError):
+            TwitterAuth(config)
+
+    def test_raises_if_token_is_placeholder(self):
+        """Raises ValueError when bearer_token is the placeholder string."""
+        config = {"twitter": {"bearer_token": "${TWITTER_BEARER_TOKEN}"}}
+        with pytest.raises(ValueError):
+            TwitterAuth(config)
+
+
+# ---------------------------------------------------------------------------
+# TwitterClient initialisation
+# ---------------------------------------------------------------------------
 
 
 class TestTwitterClientInitialization:
     """Test TwitterClient initialization."""
 
-    @patch("xdk.client.Client")
-    def test_client_init(self, mock_xdk_client: Mock):
-        """Test client initializes with token."""
-        client = TwitterClient(access_token="test_token_12345")
-        assert client.access_token == "test_token_12345"
-        mock_xdk_client.assert_called_once()
+    def test_client_init_creates_twitter_auth(self):
+        """TwitterClient must create a TwitterAuth internally from config."""
+        config = _make_config()
+        with patch("xdk.client.Client") as mock_xdk:
+            with patch(
+                "bookmark_downloader.api.twitter_client.TwitterAuth"
+            ) as mock_auth_cls:
+                mock_auth = MagicMock()
+                mock_auth.get_bearer_token.return_value = "test_bearer_token"
+                mock_auth_cls.return_value = mock_auth
 
-    @patch("xdk.client.Client")
-    def test_client_xdk_initialization(self, mock_xdk_client: Mock):
-        """Test XDK client is initialized with bearer token."""
-        client = TwitterClient(access_token="test_token_12345")
+                client = TwitterClient(config)
 
-        # Verify Client was called with bearer_token
-        call_args = mock_xdk_client.call_args
-        assert call_args[1]["bearer_token"] == "test_token_12345"
+                mock_auth_cls.assert_called_once_with(config)
+                mock_auth.get_bearer_token.assert_called_once()
+                mock_xdk.assert_called_once()
+
+    def test_client_init_is_rate_limited_false(self):
+        """is_rate_limited() must return False after initialization."""
+        client = _make_client()
+        assert client.is_rate_limited() is False
 
 
-class TestBookmarkPagination:
-    """Test bookmark fetching with pagination."""
+# ---------------------------------------------------------------------------
+# get_bookmarks
+# ---------------------------------------------------------------------------
 
-    @patch("xdk.client.Client")
-    def test_get_bookmarks_single_page(
-        self,
-        mock_client_class: Mock,
-        sample_bookmark_response: dict,
-    ):
-        """Test fetching bookmarks when only one page."""
-        # Setup mock response
+
+class TestGetBookmarks:
+    """Test get_bookmarks (single-page fetch)."""
+
+    def test_returns_tweet_list(self, sample_bookmark_response: dict):
+        """Returns a BookmarksResponse with tweets and None next_token."""
+        client = _make_client()
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = sample_bookmark_response
-        mock_response.headers = {
-            "x-rate-limit-remaining": "179",
-            "x-rate-limit-reset": str(int(time.time()) + 900),
-        }
+        mock_response.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_response
 
-        # Setup mock client instance
-        mock_client_instance = MagicMock()
-        mock_client_instance.get_users_me_bookmarks.return_value = mock_response
-        mock_client_class.return_value = mock_client_instance
+        result = client.get_bookmarks(user_id="me")
 
-        client = TwitterClient(access_token="test_token")
-        bookmarks = list(client.get_bookmarks_iter(batch_size=100))
+        assert len(result["tweets"]) == 1
+        assert result["tweets"][0]["id"] == "1234567890"
 
-        assert len(bookmarks) == 1
-        assert bookmarks[0]["id"] == "1234567890"
-        assert bookmarks[0]["text"] == "This is a test tweet"
+    def test_pagination_token_passed_when_provided(self, sample_bookmark_response: dict):
+        """Passes pagination_token to the underlying XDK call when provided."""
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = sample_bookmark_response
+        mock_response.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_response
 
-    @patch("xdk.client.Client")
-    def test_get_bookmarks_pagination(
-        self,
-        mock_client_class: Mock,
-        sample_tweet: TweetData,
-    ):
-        """Test automatic pagination through multiple pages."""
-        tweet2: TweetData = {
-            "id": "9876543210",
-            "text": "Second tweet",
-            "author_id": "user789",
-            "created_at": "2024-04-04T12:00:00Z",
-        }
+        client.get_bookmarks(user_id="me", pagination_token="tok123")
 
-        # First page response
-        response1 = {
-            "data": [sample_tweet],
-            "meta": {
-                "result_count": 1,
-                "next_token": "abc123",
+        call_kwargs = client._client.get_users_id_bookmarks.call_args.kwargs
+        assert call_kwargs.get("pagination_token") == "tok123"
+
+    def test_next_token_none_on_last_page(self, sample_bookmark_response: dict):
+        """next_token is None when the API response has no next_token."""
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = sample_bookmark_response
+        mock_response.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_response
+
+        result = client.get_bookmarks(user_id="me")
+
+        assert result["next_token"] is None
+
+    def test_includes_media_in_response(self):
+        """Media items from includes are included in the response."""
+        client = _make_client()
+        raw = {
+            "data": [{"id": "1", "text": "t", "author_id": "u1", "attachments": {"media_keys": ["3_abc"]}}],
+            "includes": {
+                "media": [{"media_key": "3_abc", "type": "photo", "url": "https://example.com/img.jpg"}]
             },
+            "meta": {},
         }
-
-        # Second page response
-        response2 = {
-            "data": [tweet2],
-            "meta": {"result_count": 1},
-        }
-
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.side_effect = [response1, response2]
-        mock_response.headers = {
-            "x-rate-limit-remaining": "179",
-            "x-rate-limit-reset": str(int(time.time()) + 900),
+        mock_response.json.return_value = raw
+        mock_response.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_response
+
+        result = client.get_bookmarks(user_id="me")
+
+        assert "media" in result["includes"]
+        assert len(result["includes"]["media"]) == 1
+        assert result["includes"]["media"][0]["media_key"] == "3_abc"
+
+    def test_includes_users_in_response(self):
+        """User items from includes are included in the response."""
+        client = _make_client()
+        raw = {
+            "data": [{"id": "1", "text": "t", "author_id": "u1"}],
+            "includes": {
+                "users": [{"id": "u1", "username": "testuser", "name": "Test User"}]
+            },
+            "meta": {},
         }
-
-        mock_client_instance = MagicMock()
-        mock_client_instance.get_users_me_bookmarks.return_value = mock_response
-        mock_client_class.return_value = mock_client_instance
-
-        client = TwitterClient(access_token="test_token")
-        bookmarks = list(client.get_bookmarks_iter(batch_size=100))
-
-        assert len(bookmarks) == 2
-        assert bookmarks[0]["id"] == "1234567890"
-        assert bookmarks[1]["id"] == "9876543210"
-
-    @patch("xdk.client.Client")
-    def test_get_bookmarks_empty(self, mock_client_class: Mock):
-        """Test handling empty bookmark list."""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {"data": [], "meta": {"result_count": 0}}
-        mock_response.headers = {
-            "x-rate-limit-remaining": "179",
-            "x-rate-limit-reset": str(int(time.time()) + 900),
-        }
+        mock_response.json.return_value = raw
+        mock_response.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_response
 
-        mock_client_instance = MagicMock()
-        mock_client_instance.get_users_me_bookmarks.return_value = mock_response
-        mock_client_class.return_value = mock_client_instance
+        result = client.get_bookmarks(user_id="me")
 
-        client = TwitterClient(access_token="test_token")
-        bookmarks = list(client.get_bookmarks_iter())
+        assert "users" in result["includes"]
+        assert len(result["includes"]["users"]) == 1
+        assert result["includes"]["users"][0]["username"] == "testuser"
 
-        assert len(bookmarks) == 0
-
-
-class TestRateLimitHandling:
-    """Test automatic rate limit handling."""
-
-    @patch("xdk.client.Client")
-    @patch("time.sleep")
-    def test_rate_limit_wait_and_retry(
-        self,
-        mock_sleep: Mock,
-        mock_client_class: Mock,
-        sample_bookmark_response: dict,
-    ):
-        """Test automatic wait and retry on rate limit."""
-        rate_limit_response = MagicMock()
-        rate_limit_response.status_code = 429
-        rate_limit_response.headers = {
-            "x-rate-limit-remaining": "0",
-            "x-rate-limit-reset": str(int(time.time()) + 10),
-        }
-
-        success_response = MagicMock()
-        success_response.status_code = 200
-        success_response.json.return_value = sample_bookmark_response
-        success_response.headers = {
-            "x-rate-limit-remaining": "179",
-            "x-rate-limit-reset": str(int(time.time()) + 900),
-        }
-
-        mock_client_instance = MagicMock()
-        mock_client_instance.get_users_me_bookmarks.side_effect = [
-            rate_limit_response,
-            success_response,
-        ]
-        mock_client_class.return_value = mock_client_instance
-
-        client = TwitterClient(access_token="test_token")
-        bookmarks = list(client.get_bookmarks_iter())
-
-        assert len(bookmarks) == 1
-        # Verify sleep was called
-        assert mock_sleep.called
-
-    @patch("xdk.client.Client")
-    def test_rate_limit_max_retries_exceeded(
-        self,
-        mock_client_class: Mock,
-    ):
-        """Test exception when rate limit retries exhausted."""
-        rate_limit_response = MagicMock()
-        rate_limit_response.status_code = 429
-        rate_limit_response.headers = {
-            "x-rate-limit-remaining": "0",
-            "x-rate-limit-reset": str(int(time.time()) + 10),
-        }
-
-        mock_client_instance = MagicMock()
-        mock_client_instance.get_users_me_bookmarks.return_value = rate_limit_response
-        mock_client_class.return_value = mock_client_instance
-
-        client = TwitterClient(access_token="test_token")
+    def test_raises_rate_limit_error_on_429(self):
+        """RateLimitError is raised on HTTP 429."""
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_response
 
         with pytest.raises(RateLimitError):
-            list(client.get_bookmarks_iter())
+            client.get_bookmarks(user_id="me")
+
+    def test_raises_api_error_on_non_2xx(self):
+        """TwitterAPIError is raised on other non-2xx responses."""
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+        mock_response.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_response
+
+        with pytest.raises(TwitterAPIError) as exc_info:
+            client.get_bookmarks(user_id="me")
+
+        assert exc_info.value.status_code == 500
+
+    def test_get_bookmarks_returns_next_token(self, sample_bookmark_response_paginated: dict):
+        """next_token is populated when the API response contains one."""
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = sample_bookmark_response_paginated
+        mock_response.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_response
+
+        result = client.get_bookmarks(user_id="me")
+
+        assert result["next_token"] == "b26v89c19zqg8o3fpza0xpa6g55ombwfjhxbzrx4zzbe"
+
+    def test_get_bookmarks_always_requests_required_fields(self):
+        """get_bookmarks always sends the required expansions and fields."""
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": [], "meta": {}}
+        mock_response.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_response
+
+        client.get_bookmarks(user_id="me")
+
+        call_kwargs = client._client.get_users_id_bookmarks.call_args.kwargs
+        assert "attachments.media_keys" in call_kwargs.get("expansions", "")
+        assert "author_id" in call_kwargs.get("expansions", "")
+        assert "referenced_tweets.id" in call_kwargs.get("expansions", "")
+        assert "referenced_tweets" in call_kwargs.get("tweet.fields", "")
+        assert "preview_image_url" in call_kwargs.get("media.fields", "")
+        assert "variants" in call_kwargs.get("media.fields", "")
 
 
-class TestErrorHandling:
-    """Test error handling for edge cases."""
+# ---------------------------------------------------------------------------
+# get_tweet_details
+# ---------------------------------------------------------------------------
 
-    @patch("xdk.client.Client")
-    def test_deleted_tweet_404_error(
-        self,
-        mock_client_class: Mock,
-    ):
-        """Test handling of deleted tweet (404)."""
+
+class TestGetTweetDetails:
+    """Test get_tweet_details."""
+
+    def test_returns_tweet_data(self):
+        """Returns TweetData on success."""
+        client = _make_client()
+        tweet = {"id": "123", "text": "hello", "author_id": "u1"}
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": tweet}
+        mock_response.headers = {}
+        client._client.get_tweets_id.return_value = mock_response
+
+        result = client.get_tweet_details("123")
+
+        assert result is not None
+        assert result["id"] == "123"
+
+    def test_returns_none_on_404(self):
+        """Returns None when tweet not found (HTTP 404)."""
+        client = _make_client()
         mock_response = MagicMock()
         mock_response.status_code = 404
-        mock_response.headers = {
-            "x-rate-limit-remaining": "179",
-            "x-rate-limit-reset": str(int(time.time()) + 900),
-        }
+        mock_response.headers = {}
+        client._client.get_tweets_id.return_value = mock_response
 
-        mock_client_instance = MagicMock()
-        mock_client_instance.get_tweets_id.return_value = mock_response
-        mock_client_class.return_value = mock_client_instance
+        result = client.get_tweet_details("deleted_tweet_id")
 
-        client = TwitterClient(access_token="test_token")
+        assert result is None
 
-        with pytest.raises(ValueError, match="deleted or inaccessible"):
-            client.get_tweet_details("deleted_tweet_id")
+    def test_404_clears_is_rate_limited(self):
+        """A 404 response clears the is_rate_limited flag."""
+        client = _make_client()
 
-    @patch("xdk.client.Client")
-    def test_protected_tweet_403_error(
-        self,
-        mock_client_class: Mock,
-    ):
-        """Test handling of protected/private tweet (403)."""
+        # First trigger a 429
+        mock_429 = MagicMock()
+        mock_429.status_code = 429
+        mock_429.headers = {}
+        client._client.get_tweets_id.return_value = mock_429
+        with pytest.raises(RateLimitError):
+            client.get_tweet_details("some_id")
+        assert client.is_rate_limited() is True
+
+        # Now get a 404 — should clear the flag
+        mock_404 = MagicMock()
+        mock_404.status_code = 404
+        mock_404.headers = {}
+        client._client.get_tweets_id.return_value = mock_404
+        result = client.get_tweet_details("deleted_tweet_id")
+
+        assert result is None
+        assert client.is_rate_limited() is False
+
+    def test_raises_rate_limit_error_on_429(self):
+        """RateLimitError raised on HTTP 429."""
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.headers = {}
+        client._client.get_tweets_id.return_value = mock_response
+
+        with pytest.raises(RateLimitError):
+            client.get_tweet_details("some_id")
+
+    def test_raises_twitter_api_error_on_other_errors(self):
+        """TwitterAPIError raised on other non-2xx."""
+        client = _make_client()
         mock_response = MagicMock()
         mock_response.status_code = 403
-        mock_response.headers = {
-            "x-rate-limit-remaining": "179",
-            "x-rate-limit-reset": str(int(time.time()) + 900),
+        mock_response.text = "Forbidden"
+        mock_response.headers = {}
+        client._client.get_tweets_id.return_value = mock_response
+
+        with pytest.raises(TwitterAPIError) as exc_info:
+            client.get_tweet_details("some_id")
+
+        assert exc_info.value.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# get_me
+# ---------------------------------------------------------------------------
+
+
+class TestGetMe:
+    """Test get_me."""
+
+    def test_returns_user_data(self):
+        """get_me returns UserData on success."""
+        client = _make_client()
+        user = {"id": "u1", "username": "testuser", "name": "Test User"}
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": user}
+        mock_response.headers = {}
+        client._client.get_users_me.return_value = mock_response
+
+        result = client.get_me()
+
+        assert result["id"] == "u1"
+        assert result["username"] == "testuser"
+        assert result["name"] == "Test User"
+
+    def test_raises_twitter_api_error_on_failure(self):
+        """TwitterAPIError raised when get_me fails."""
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.text = "Unauthorized"
+        mock_response.headers = {}
+        client._client.get_users_me.return_value = mock_response
+
+        with pytest.raises(TwitterAPIError) as exc_info:
+            client.get_me()
+
+        assert exc_info.value.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# TestRateLimit (spec-required consolidated class)
+# ---------------------------------------------------------------------------
+
+
+class TestRateLimit:
+    """Test rate-limit flag and reset behaviour (spec-required class)."""
+
+    def test_is_rate_limited_false_by_default(self):
+        """is_rate_limited() returns False before any API call."""
+        client = _make_client()
+        assert client.is_rate_limited() is False
+
+    def test_is_rate_limited_true_after_429(self):
+        """is_rate_limited() returns True after a 429 response."""
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_response
+
+        with pytest.raises(RateLimitError):
+            client.get_bookmarks(user_id="me")
+
+        assert client.is_rate_limited() is True
+
+    def test_is_rate_limited_false_after_success(self):
+        """is_rate_limited() resets to False after a successful 2xx response."""
+        client = _make_client()
+
+        # Trigger 429
+        mock_429 = MagicMock()
+        mock_429.status_code = 429
+        mock_429.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_429
+        with pytest.raises(RateLimitError):
+            client.get_bookmarks(user_id="me")
+        assert client.is_rate_limited() is True
+
+        # Succeed
+        mock_200 = MagicMock()
+        mock_200.status_code = 200
+        mock_200.json.return_value = {"data": [], "meta": {}}
+        mock_200.headers = {}
+        client._client.get_users_id_bookmarks.return_value = mock_200
+        client.get_bookmarks(user_id="me")
+        assert client.is_rate_limited() is False
+
+    @patch("time.sleep")
+    @patch("time.time", return_value=1000)
+    def test_wait_for_rate_limit_reset_sleeps_until_reset(self, mock_time: Mock, mock_sleep: Mock):
+        """wait_for_rate_limit_reset sleeps until the stored reset_at timestamp."""
+        client = _make_client()
+        client._rate_limit_reset = 1060  # 60 seconds from now (mock time=1000)
+        client.wait_for_rate_limit_reset()
+        mock_sleep.assert_called_once_with(60)
+
+    @patch("time.sleep")
+    def test_wait_uses_default_900s_when_no_reset_timestamp(self, mock_sleep: Mock):
+        """wait_for_rate_limit_reset waits 900 seconds when no reset timestamp is stored."""
+        client = _make_client()
+        client.wait_for_rate_limit_reset()
+        mock_sleep.assert_called_once_with(900)
+
+    @patch("time.sleep")
+    def test_logs_before_sleeping(self, mock_sleep: Mock):
+        """Logs the wait duration before sleeping (smoke test — no error thrown)."""
+        client = _make_client()
+        # Should not raise even without logger setup
+        client.wait_for_rate_limit_reset()
+        assert mock_sleep.called
+
+
+# ---------------------------------------------------------------------------
+# extract_media_urls (static method)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractMediaUrls:
+    """Test extract_media_urls static method."""
+
+    def test_is_static_method(self):
+        """extract_media_urls must be a static method."""
+        assert isinstance(
+            TwitterClient.__dict__["extract_media_urls"],
+            staticmethod,
+        )
+
+    def test_returns_empty_list_when_no_attachments(self, sample_tweet_no_media: TweetData):
+        """Returns empty list when tweet has no attachments."""
+        includes: IncludesData = {}
+        result = TwitterClient.extract_media_urls(sample_tweet_no_media, includes)
+        assert result == []
+
+    def test_returns_empty_list_when_no_media_in_includes(self, sample_tweet: TweetData):
+        """Returns empty list when media_keys don't match any entry in includes."""
+        includes: IncludesData = {"media": []}
+        result = TwitterClient.extract_media_urls(sample_tweet, includes)
+        assert result == []
+
+    def test_photo_url_extracted(self):
+        """Extracts url directly for photo type."""
+        tweet: TweetData = {
+            "id": "1",
+            "text": "photo",
+            "author_id": "u1",
+            "attachments": {"media_keys": ["3_abc"]},
         }
+        includes: IncludesData = {
+            "media": [
+                {"media_key": "3_abc", "type": "photo", "url": "https://example.com/photo.jpg"}
+            ]
+        }
+        result = TwitterClient.extract_media_urls(tweet, includes)
+        assert len(result) == 1
+        assert result[0]["url"] == "https://example.com/photo.jpg"
+        assert result[0]["type"] == "photo"
+        assert result[0]["media_key"] == "3_abc"
 
-        mock_client_instance = MagicMock()
-        mock_client_instance.get_tweets_id.return_value = mock_response
-        mock_client_class.return_value = mock_client_instance
+    def test_video_selects_highest_bitrate_variant(self):
+        """Selects variant with highest bit_rate for video type."""
+        tweet: TweetData = {
+            "id": "1",
+            "text": "video",
+            "author_id": "u1",
+            "attachments": {"media_keys": ["7_abc"]},
+        }
+        includes: IncludesData = {
+            "media": [
+                {
+                    "media_key": "7_abc",
+                    "type": "video",
+                    "variants": [
+                        {"content_type": "video/mp4", "url": "https://low.mp4", "bit_rate": 256000},
+                        {"content_type": "video/mp4", "url": "https://high.mp4", "bit_rate": 2176000},
+                        {"content_type": "video/mp4", "url": "https://mid.mp4", "bit_rate": 832000},
+                    ],
+                }
+            ]
+        }
+        result = TwitterClient.extract_media_urls(tweet, includes)
+        assert len(result) == 1
+        assert result[0]["url"] == "https://high.mp4"
+        assert result[0]["type"] == "video"
 
-        client = TwitterClient(access_token="test_token")
+    def test_animated_gif_extracted(self):
+        """Extracts URL for animated_gif type."""
+        tweet: TweetData = {
+            "id": "1",
+            "text": "gif",
+            "author_id": "u1",
+            "attachments": {"media_keys": ["16_abc"]},
+        }
+        includes: IncludesData = {
+            "media": [
+                {
+                    "media_key": "16_abc",
+                    "type": "animated_gif",
+                    "variants": [
+                        {"content_type": "video/mp4", "url": "https://example.com/gif.mp4", "bit_rate": 0},
+                    ],
+                }
+            ]
+        }
+        result = TwitterClient.extract_media_urls(tweet, includes)
+        assert len(result) == 1
+        assert result[0]["type"] == "animated_gif"
+        assert result[0]["media_key"] == "16_abc"
 
-        with pytest.raises(ValueError, match="access denied"):
-            client.get_tweet_details("protected_tweet_id")
-
-    def test_missing_required_field_id(self):
-        """Test validation fails on missing id field."""
-        with patch("xdk.client.Client"):
-            client = TwitterClient(access_token="test_token")
-            invalid_tweet = {"text": "No ID", "author_id": "user123"}
-
-            with pytest.raises(ValueError, match="Missing required field: id"):
-                client._validate_tweet(invalid_tweet)
-
-    def test_missing_required_field_text(self):
-        """Test validation fails on missing text field."""
-        with patch("xdk.client.Client"):
-            client = TwitterClient(access_token="test_token")
-            invalid_tweet = {"id": "123", "author_id": "user123"}
-
-            with pytest.raises(ValueError, match="Missing required field: text"):
-                client._validate_tweet(invalid_tweet)
-
-    def test_missing_required_field_author_id(self):
-        """Test validation fails on missing author_id field."""
-        with patch("xdk.client.Client"):
-            client = TwitterClient(access_token="test_token")
-            invalid_tweet = {"id": "123", "text": "No author"}
-
-            with pytest.raises(ValueError, match="Missing required field: author_id"):
-                client._validate_tweet(invalid_tweet)
-
-
-class TestMediaExtraction:
-    """Test media URL extraction from tweets."""
-
-    def test_extract_media_urls_with_media(self, sample_tweet: TweetData):
-        """Test extracting media URLs from tweet with attachments."""
-        with patch("xdk.client.Client"):
-            client = TwitterClient(access_token="test_token")
-            media_urls = client.extract_media_urls(sample_tweet)
-
-            assert isinstance(media_urls, list)
-
-    def test_extract_media_urls_no_media(self, sample_tweet_no_media: TweetData):
-        """Test extracting media from text-only tweet."""
-        with patch("xdk.client.Client"):
-            client = TwitterClient(access_token="test_token")
-            media_urls = client.extract_media_urls(sample_tweet_no_media)
-
-            assert len(media_urls) == 0
+    def test_preserves_media_key_order(self):
+        """Output order matches the order of media_keys in the tweet."""
+        tweet: TweetData = {
+            "id": "1",
+            "text": "multi",
+            "author_id": "u1",
+            "attachments": {"media_keys": ["3_first", "3_second", "3_third"]},
+        }
+        includes: IncludesData = {
+            "media": [
+                {"media_key": "3_second", "type": "photo", "url": "https://second.jpg"},
+                {"media_key": "3_third", "type": "photo", "url": "https://third.jpg"},
+                {"media_key": "3_first", "type": "photo", "url": "https://first.jpg"},
+            ]
+        }
+        result = TwitterClient.extract_media_urls(tweet, includes)
+        assert [r["url"] for r in result] == [
+            "https://first.jpg",
+            "https://second.jpg",
+            "https://third.jpg",
+        ]
 
 
-# OAuth and Auth Tests
+# ---------------------------------------------------------------------------
+# Error types
+# ---------------------------------------------------------------------------
+
+
+class TestErrorTypes:
+    """Test TwitterAPIError and RateLimitError."""
+
+    def test_twitter_api_error_stores_status_code(self):
+        """TwitterAPIError stores the status_code attribute."""
+        err = TwitterAPIError("Something went wrong", 503)
+        assert err.status_code == 503
+        assert "Something went wrong" in str(err)
+
+    def test_rate_limit_error_is_twitter_api_error(self):
+        """RateLimitError is a subclass of TwitterAPIError."""
+        err = RateLimitError()
+        assert isinstance(err, TwitterAPIError)
+        assert err.status_code == 429
+
+    def test_rate_limit_error_stores_reset_at(self):
+        """RateLimitError stores reset_at when provided."""
+        err = RateLimitError(reset_at=1700000000)
+        assert err.reset_at == 1700000000
+
+    def test_rate_limit_error_reset_at_defaults_to_none(self):
+        """RateLimitError reset_at is None when not provided."""
+        err = RateLimitError()
+        assert err.reset_at is None
+
+
+# ---------------------------------------------------------------------------
+# OAuth and Auth Tests (unchanged — testing auth.py)
+# ---------------------------------------------------------------------------
 
 
 class TestOAuth2PKCE:
@@ -413,34 +738,30 @@ class TestMapQuotedTweetId:
     """Test _map_quoted_tweet_id helper method."""
 
     def test_returns_quoted_id_when_type_is_quoted(self):
-        with patch("xdk.client.Client"):
-            client = TwitterClient(access_token="test_token")
-            result = client._map_quoted_tweet_id({
-                "referenced_tweets": [{"type": "quoted", "id": "9876543210"}]
-            })
+        client = _make_client()
+        result = client._map_quoted_tweet_id({
+            "referenced_tweets": [{"type": "quoted", "id": "9876543210"}]
+        })
         assert result == "9876543210"
 
     def test_returns_none_when_type_is_replied_to(self):
-        with patch("xdk.client.Client"):
-            client = TwitterClient(access_token="test_token")
-            result = client._map_quoted_tweet_id({
-                "referenced_tweets": [{"type": "replied_to", "id": "9876543210"}]
-            })
+        client = _make_client()
+        result = client._map_quoted_tweet_id({
+            "referenced_tweets": [{"type": "replied_to", "id": "9876543210"}]
+        })
         assert result is None
 
     def test_returns_none_when_no_referenced_tweets(self):
-        with patch("xdk.client.Client"):
-            client = TwitterClient(access_token="test_token")
-            result = client._map_quoted_tweet_id({})
+        client = _make_client()
+        result = client._map_quoted_tweet_id({})
         assert result is None
 
     def test_returns_quoted_id_when_mixed_with_replied_to(self):
-        with patch("xdk.client.Client"):
-            client = TwitterClient(access_token="test_token")
-            result = client._map_quoted_tweet_id({
-                "referenced_tweets": [
-                    {"type": "replied_to", "id": "1111111111"},
-                    {"type": "quoted", "id": "9876543210"},
-                ]
-            })
+        client = _make_client()
+        result = client._map_quoted_tweet_id({
+            "referenced_tweets": [
+                {"type": "replied_to", "id": "1111111111"},
+                {"type": "quoted", "id": "9876543210"},
+            ]
+        })
         assert result == "9876543210"
