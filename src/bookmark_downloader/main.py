@@ -49,9 +49,6 @@ def verify_setup(config) -> bool:
         downloads_dir = config.get_downloads_dir()
         logs_dir = config.get_logs_dir()
 
-        logger.info(f"Downloads directory: {downloads_dir}")
-        logger.info(f"Logs directory: {logs_dir}")
-
         # Create directories if they don't exist
         downloads_dir.mkdir(parents=True, exist_ok=True)
         logs_dir.mkdir(parents=True, exist_ok=True)
@@ -246,13 +243,11 @@ Examples:
 
         # Override log level if specified
         if args.log_level:
-            config.config["logging"]["level"] = args.log_level
+            config["logging"]["level"] = args.log_level
 
         # Set up logging
         setup_logging(config)
         logger = get_logger(__name__)
-
-        logger.info(f"X Bookmark Downloader starting (command: {args.command})")
 
         # Execute command
         if args.command == "verify_setup":
@@ -264,7 +259,7 @@ Examples:
         elif args.command == "retry_quarantine":
             success = retry_quarantine(config, limit=args.limit)
         elif args.command == "clear_cache":
-            success = clear_cache(config, older_than_days=args.limit or 90)
+            success = clear_cache(config)
         else:
             logger.error(f"Unknown command: {args.command}")
             success = False
@@ -278,7 +273,7 @@ Examples:
         return 130
     except Exception as e:
         logger = get_logger(__name__)
-        logger.error(f"Fatal error: {e}", exc_info=True)
+        logger.error(f"Fatal error: {e}")
         return 1
 
 

@@ -26,11 +26,7 @@ class Logger:
         """
         logger = logging.getLogger("bookmark_downloader")
 
-        # Avoid duplicate handlers
-        if logger.handlers:
-            return logger
-
-        # Clear existing handlers
+        # Clear existing handlers (idempotent — prevents duplicates on repeated setup)
         logger.handlers.clear()
 
         # Set log level
@@ -38,8 +34,8 @@ class Logger:
         logger.setLevel(getattr(logging, log_level))
 
         # Create logs directory if it doesn't exist
+        config.get_logs_dir().mkdir(parents=True, exist_ok=True)
         log_file = config.get_log_file()
-        log_file.parent.mkdir(parents=True, exist_ok=True)
 
         # File handler with rotation
         file_handler = logging.handlers.RotatingFileHandler(
