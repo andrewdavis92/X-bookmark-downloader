@@ -32,6 +32,12 @@ if [[ -z "$CONFIG_PATH" ]]; then
     CONFIG_PATH="$PROJECT_DIR/config.yaml"
 fi
 
+if [[ ! -f "$CONFIG_PATH" ]]; then
+    echo "Error: config file not found at $CONFIG_PATH" >&2
+    echo "Copy config.example.yaml to config.yaml and fill in your credentials." >&2
+    exit 1
+fi
+
 PYTHON_PATH="$PROJECT_DIR/.venv/bin/python3"
 if [[ ! -f "$PYTHON_PATH" ]]; then
     echo "Error: Virtual environment not found at $PROJECT_DIR/.venv" >&2
