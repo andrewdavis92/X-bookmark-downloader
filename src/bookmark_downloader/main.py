@@ -6,9 +6,12 @@ Downloads media from X (Twitter) bookmarks with intelligent organization.
 import argparse
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
+from bookmark_downloader.api.twitter_client import BookmarkClient
 from bookmark_downloader.config import get_config, reload_config
+from bookmark_downloader.storage.database import StateManager
+from bookmark_downloader.storage.quarantine import QuarantineManager, classify_error
 from bookmark_downloader.utils.logger import Logger, get_logger
 
 
@@ -117,6 +120,11 @@ def show_stats(config) -> bool:
         return False
 
 
+def _reprocess_tweet(tweet_data: Dict) -> None:
+    """Process a single tweet's data for download. Implemented in Phase 8."""
+    raise NotImplementedError("reprocess logic not yet implemented; see Phase 8")
+
+
 def retry_quarantine(config, limit: Optional[int] = None) -> bool:
     """Retry failed downloads from quarantine.
 
@@ -130,14 +138,72 @@ def retry_quarantine(config, limit: Optional[int] = None) -> bool:
     logger = get_logger(__name__)
 
     try:
-        logger.info("Retrying quarantined items...")
+        quarantine_manager = QuarantineManager(config)
+        state_manager = StateManager(config)
+        bookmark_client = BookmarkClient(config)
 
-        if limit:
-            logger.info(f"Retrying up to {limit} items")
+        quarantined = state_manager.get_quarantined_bookmarks(limit if limit is not None else 100)
+        logger.info("Found %d quarantined items to retry", len(quarantined))
 
-        # TODO: Implement quarantine retry in Phase 7+
-        logger.warning("Quarantine retry not yet implemented")
+        results = []
+        for item in quarantined:
+            tweet_id = item["tweet_id"]
+            retry_count = item.get("retry_count", 0)
+            tweet_data = None
+            exc = None
 
+            # Try stored JSON first
+            stored_data = quarantine_manager.get_tweet_data(tweet_id)
+            if stored_data is not None:
+                try:
+                    _reprocess_tweet(stored_data)
+                    tweet_data = stored_data
+                except Exception as e:
+                    exc = e
+                    tweet_data = stored_data
+
+            # Fall back to API if no stored data or reprocess failed
+            if stored_data is None or exc is not None:
+                try:
+                    fresh_data = bookmark_client.get_tweet_details(tweet_id)
+                    tweet_data = fresh_data
+                    exc = None
+                    _reprocess_tweet(fresh_data)
+                except Exception as e:
+                    exc = e
+
+            if exc is None:
+                quarantine_manager.remove_item(tweet_id)
+                state_manager.mark_processed(tweet_id, "success", [], 0)
+                results.append({
+                    "tweet_id": tweet_id,
+                    "outcome": "success",
+                    "retry_count": retry_count,
+                })
+                logger.info("Successfully reprocessed %s", tweet_id)
+            else:
+                category = classify_error(exc)
+                quarantine_manager.quarantine_item(tweet_id, tweet_data, exc, category, retry_count + 1)
+                state_manager.mark_quarantined(tweet_id, str(exc), retry_count + 1)
+                results.append({
+                    "tweet_id": tweet_id,
+                    "outcome": "failed",
+                    "error": str(exc),
+                    "error_category": category.value,
+                    "retry_count": retry_count + 1,
+                })
+                logger.warning("Failed to reprocess %s: %s", tweet_id, exc)
+
+        succeeded = sum(1 for r in results if r["outcome"] == "success")
+        failed = sum(1 for r in results if r["outcome"] == "failed")
+        report_path = quarantine_manager.generate_report(results)
+
+        print(f"Quarantine retry: {len(results)} items")
+        print(f"  Succeeded: {succeeded}")
+        print(f"  Failed:    {failed}")
+        print(f"  Report:    {report_path}")
+
+        state_manager.close()
         return True
 
     except Exception as e:
