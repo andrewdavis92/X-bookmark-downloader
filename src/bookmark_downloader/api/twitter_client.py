@@ -359,3 +359,10 @@ class TwitterClient:
                     results.append(MediaUrl(url=best["url"], type=media_type, media_key=key))
 
         return results
+
+    def _map_quoted_tweet_id(self, tweet: dict) -> Optional[str]:
+        """Return the quoted tweet ID from referenced_tweets, or None."""
+        for ref in tweet.get("referenced_tweets", []):
+            if ref.get("type") == "quoted":
+                return ref.get("id")
+        return None
