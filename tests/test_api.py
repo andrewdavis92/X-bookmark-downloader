@@ -39,7 +39,15 @@ def _make_config(bearer_token: str = "test_bearer_token") -> dict:
 
 
 def _make_client(bearer_token: str = "test_bearer_token") -> TwitterClient:
-    """Create a TwitterClient with all external dependencies patched."""
+    """Create a TwitterClient with all external dependencies patched.
+
+    The patch context exits before this function returns, so the patches are no
+    longer active when test bodies run.  That is intentional and safe: the
+    xdk.client.Client patch only needs to be live during __init__ so that
+    client._client is assigned a MagicMock.  Tests then configure that mock
+    directly (e.g. ``client._client.get_users_id_bookmarks.return_value = …``).
+    The constructor is never called again, so the expired patch causes no harm.
+    """
     config = _make_config(bearer_token)
     with patch("xdk.client.Client"):
         with patch(
@@ -195,7 +203,7 @@ class TestGetBookmarks:
 
         client.get_bookmarks(user_id="me", pagination_token="tok123")
 
-        call_kwargs = client._client.get_users_id_bookmarks.call_args[1]
+        call_kwargs = client._client.get_users_id_bookmarks.call_args.kwargs
         assert call_kwargs.get("pagination_token") == "tok123"
 
     def test_next_token_none_on_last_page(self, sample_bookmark_response: dict):
@@ -304,7 +312,7 @@ class TestGetBookmarks:
 
         client.get_bookmarks(user_id="me")
 
-        call_kwargs = client._client.get_users_id_bookmarks.call_args[1]
+        call_kwargs = client._client.get_users_id_bookmarks.call_args.kwargs
         assert "attachments.media_keys" in call_kwargs.get("expansions", "")
         assert "author_id" in call_kwargs.get("expansions", "")
         assert "referenced_tweets.id" in call_kwargs.get("expansions", "")
@@ -499,80 +507,6 @@ class TestRateLimit:
         client = _make_client()
         client.wait_for_rate_limit_reset()
         mock_sleep.assert_called_once_with(900)
-
-
-# ---------------------------------------------------------------------------
-# is_rate_limited
-# ---------------------------------------------------------------------------
-
-
-class TestIsRateLimited:
-    """Test is_rate_limited flag behaviour."""
-
-    def test_false_initially(self):
-        """Starts as False."""
-        client = _make_client()
-        assert client.is_rate_limited() is False
-
-    def test_true_after_429(self):
-        """Becomes True after a 429 response."""
-        client = _make_client()
-        mock_response = MagicMock()
-        mock_response.status_code = 429
-        mock_response.headers = {}
-        client._client.get_users_id_bookmarks.return_value = mock_response
-
-        with pytest.raises(RateLimitError):
-            client.get_bookmarks(user_id="me")
-
-        assert client.is_rate_limited() is True
-
-    def test_resets_to_false_after_2xx(self):
-        """Resets to False after a successful 2xx response."""
-        client = _make_client()
-
-        # First trigger a 429
-        mock_429 = MagicMock()
-        mock_429.status_code = 429
-        mock_429.headers = {}
-        client._client.get_users_id_bookmarks.return_value = mock_429
-        with pytest.raises(RateLimitError):
-            client.get_bookmarks(user_id="me")
-        assert client.is_rate_limited() is True
-
-        # Now succeed
-        mock_200 = MagicMock()
-        mock_200.status_code = 200
-        mock_200.json.return_value = {"data": [], "meta": {}}
-        mock_200.headers = {}
-        client._client.get_users_id_bookmarks.return_value = mock_200
-        client.get_bookmarks(user_id="me")
-        assert client.is_rate_limited() is False
-
-
-# ---------------------------------------------------------------------------
-# wait_for_rate_limit_reset
-# ---------------------------------------------------------------------------
-
-
-class TestWaitForRateLimitReset:
-    """Test wait_for_rate_limit_reset."""
-
-    @patch("time.sleep")
-    def test_waits_900s_when_no_reset_timestamp(self, mock_sleep: Mock):
-        """Waits 900 seconds when no reset timestamp is available."""
-        client = _make_client()
-        client.wait_for_rate_limit_reset()
-        mock_sleep.assert_called_once_with(900)
-
-    @patch("time.sleep")
-    @patch("time.time", return_value=1000)
-    def test_waits_until_reset_timestamp(self, mock_time: Mock, mock_sleep: Mock):
-        """Waits until the stored reset_at timestamp."""
-        client = _make_client()
-        client._rate_limit_reset = 1060  # 60 seconds from now (mock time=1000)
-        client.wait_for_rate_limit_reset()
-        mock_sleep.assert_called_once_with(60)
 
     @patch("time.sleep")
     def test_logs_before_sleeping(self, mock_sleep: Mock):
