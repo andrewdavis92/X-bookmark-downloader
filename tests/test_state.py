@@ -387,3 +387,35 @@ def test_mark_quarantined_logs_history(state_manager):
     row = cursor.fetchone()
     assert row["action"] == "quarantined"
     assert row["details"] == "deleted tweet"
+
+
+class TestRecordMediaFile:
+    def test_record_media_file_increments_stats(self, state_manager):
+        state_manager.mark_processed("tweet1", "success", [], 0)
+        state_manager.record_media_file("tweet1", "/path/to/file.jpg", "photo", 12345)
+        stats = state_manager.get_processing_stats()
+        assert stats.total_media_downloaded == 1
+
+    def test_record_multiple_media_files(self, state_manager):
+        state_manager.mark_processed("tweet1", "success", [], 0)
+        state_manager.record_media_file("tweet1", "/a.jpg", "photo", 100)
+        state_manager.record_media_file("tweet1", "/b.mp4", "video", 200)
+        stats = state_manager.get_processing_stats()
+        assert stats.total_media_downloaded == 2
+
+
+class TestMarkProcessedWithAuthorInfo:
+    def test_mark_processed_stores_author_username(self, state_manager):
+        state_manager.mark_processed(
+            "tweet1", "success", ["/path"], 1,
+            author_username="alice", author_id="111"
+        )
+        bookmark = state_manager._db._get_bookmark("tweet1")
+        assert bookmark["author_username"] == "alice"
+        assert bookmark["author_id"] == "111"
+
+    def test_mark_processed_without_author_info_still_works(self, state_manager):
+        state_manager.mark_processed("tweet1", "success", [], 0)
+        bookmark = state_manager._db._get_bookmark("tweet1")
+        assert bookmark is not None
+        assert bookmark["status"] == "success"
