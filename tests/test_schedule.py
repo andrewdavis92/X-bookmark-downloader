@@ -2,8 +2,11 @@
 
 import os
 import plistlib
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 SCHEDULE_DIR = REPO_ROOT / "schedule"
@@ -55,6 +58,10 @@ class TestPlistStructure:
         assert plist.get("RunAtLoad") is False
 
 
+@pytest.mark.skipif(
+    not (REPO_ROOT / ".venv" / "bin" / "python3").exists(),
+    reason="requires .venv to be set up"
+)
 class TestInstallScript:
     def test_install_script_exists(self):
         assert INSTALL_SH.exists()
@@ -80,13 +87,15 @@ class TestInstallScript:
         config_path = tmp_path / "config.yaml"
         config_path.write_text("twitter:\n  bearer_token: test\n")
 
-        subprocess.run(
+        result = subprocess.run(
             ["bash", str(INSTALL_SH), "--config", str(config_path)],
             env={**os.environ, "LAUNCH_AGENTS_DIR": str(agents_dir),
                  "SKIP_LAUNCHCTL": "1"},
             capture_output=True,
+            text=True,
             cwd=str(REPO_ROOT),
         )
+        assert result.returncode == 0, result.stderr
 
         content = (agents_dir / "com.user.bookmark-downloader.plist").read_text()
         assert "__CONFIG_PATH__" not in content
@@ -97,13 +106,15 @@ class TestInstallScript:
         config_path = tmp_path / "config.yaml"
         config_path.write_text("twitter:\n  bearer_token: test\n")
 
-        subprocess.run(
+        result = subprocess.run(
             ["bash", str(INSTALL_SH), "--config", str(config_path)],
             env={**os.environ, "LAUNCH_AGENTS_DIR": str(agents_dir),
                  "SKIP_LAUNCHCTL": "1"},
             capture_output=True,
+            text=True,
             cwd=str(REPO_ROOT),
         )
+        assert result.returncode == 0, result.stderr
 
         content = (agents_dir / "com.user.bookmark-downloader.plist").read_text()
         for placeholder in ("__PYTHON_PATH__", "__CONFIG_PATH__",
@@ -116,13 +127,15 @@ class TestInstallScript:
         config_path = tmp_path / "config.yaml"
         config_path.write_text("twitter:\n  bearer_token: test\n")
 
-        subprocess.run(
+        result = subprocess.run(
             ["bash", str(INSTALL_SH), "--config", str(config_path)],
             env={**os.environ, "LAUNCH_AGENTS_DIR": str(agents_dir),
                  "SKIP_LAUNCHCTL": "1"},
             capture_output=True,
+            text=True,
             cwd=str(REPO_ROOT),
         )
+        assert result.returncode == 0, result.stderr
 
         plist_path = agents_dir / "com.user.bookmark-downloader.plist"
         with open(plist_path, "rb") as f:
@@ -139,7 +152,6 @@ class TestInstallScript:
         fake_project.mkdir()
         fake_schedule = fake_project / "schedule"
         fake_schedule.mkdir()
-        import shutil
         shutil.copy(INSTALL_SH, fake_schedule / "install.sh")
         shutil.copy(PLIST_PATH, fake_schedule / "com.user.bookmark-downloader.plist")
 
@@ -164,13 +176,15 @@ class TestUninstallScript:
         config_path.write_text("twitter:\n  bearer_token: test\n")
 
         # Install first
-        subprocess.run(
+        result = subprocess.run(
             ["bash", str(INSTALL_SH), "--config", str(config_path)],
             env={**os.environ, "LAUNCH_AGENTS_DIR": str(agents_dir),
                  "SKIP_LAUNCHCTL": "1"},
             capture_output=True,
+            text=True,
             cwd=str(REPO_ROOT),
         )
+        assert result.returncode == 0, result.stderr
         assert (agents_dir / "com.user.bookmark-downloader.plist").exists()
 
         # Then uninstall

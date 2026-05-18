@@ -43,6 +43,7 @@ PYTHON_DIR="$(dirname "$PYTHON_PATH")"
 LOGS_DIR="$HOME/Library/Logs/bookmark-downloader"
 
 mkdir -p "$LAUNCH_AGENTS_DIR"
+mkdir -p "$LOGS_DIR"
 
 sed \
     -e "s|__PYTHON_PATH__|$PYTHON_PATH|g" \
