@@ -4,7 +4,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 SCHEMA_VERSION = 1
 
@@ -171,16 +171,38 @@ class StateManager:
         status: str,
         file_paths: List[str],
         media_count: int = 0,
+        author_username: Optional[str] = None,
+        author_id: Optional[str] = None,
     ) -> None:
         now = datetime.utcnow().isoformat()
-        self._db._upsert_bookmark(
-            tweet_id,
-            status=status,
-            media_count=media_count,
-            folder_path=str(file_paths[0]) if file_paths else None,
-            downloaded_at=now,
-        )
+        kwargs: Dict[str, Any] = {
+            "status": status,
+            "media_count": media_count,
+            "folder_path": str(file_paths[0]) if file_paths else None,
+            "downloaded_at": now,
+        }
+        if author_username is not None:
+            kwargs["author_username"] = author_username
+        if author_id is not None:
+            kwargs["author_id"] = author_id
+        self._db._upsert_bookmark(tweet_id, **kwargs)
         self._db._log_history(tweet_id, "processed", f"media_count={media_count}")
+
+    def record_media_file(
+        self,
+        tweet_id: str,
+        file_path: str,
+        media_type: str,
+        file_size: int = 0,
+    ) -> None:
+        now = datetime.utcnow().isoformat()
+        self._db._conn.execute(
+            """INSERT INTO media_files
+                   (tweet_id, file_path, media_type, file_size, downloaded_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (tweet_id, file_path, media_type, file_size, now),
+        )
+        self._db._conn.commit()
 
     def mark_failed(
         self, tweet_id: str, error: str, retry_count: int = 0
