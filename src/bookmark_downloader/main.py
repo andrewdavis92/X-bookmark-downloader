@@ -54,6 +54,125 @@ def _find_user(user_id: str, includes: Dict) -> Optional[Dict]:
     return None
 
 
+def _process_tweet(
+    tweet_data: Dict,
+    includes: Dict,
+    api_client: TwitterClient,
+    storage: LocalStorage,
+    state: StateManager,
+    config: Config,
+    dry_run: bool = False,
+) -> int:
+    """Process one bookmark tweet. Returns number of media files downloaded."""
+    logger = get_logger(__name__)
+    tweet_id = tweet_data["id"]
+    author_id = tweet_data.get("author_id", "")
+
+    author_user = _find_user(author_id, includes)
+    author_username = author_user["username"] if author_user else author_id
+
+    # Find quoted tweet ID from referenced_tweets
+    quoted_tweet_id: Optional[str] = None
+    for ref in (tweet_data.get("referenced_tweets") or []):
+        if ref.get("type") == "quoted":
+            quoted_tweet_id = ref.get("id")
+            break
+
+    quoted_tweet_data: Optional[Dict] = None
+    quoted_author_username: Optional[str] = None
+    if quoted_tweet_id:
+        expanded = {t["id"]: t for t in (includes.get("tweets") or [])}
+        quoted_tweet_data = expanded.get(quoted_tweet_id)
+        if quoted_tweet_data is None:
+            quoted_tweet_data = api_client.get_tweet_details(quoted_tweet_id)
+        if quoted_tweet_data:
+            quid = quoted_tweet_data.get("author_id", "")
+            quoted_user = _find_user(quid, includes)
+            quoted_author_username = quoted_user["username"] if quoted_user else (quid or None)
+
+    # Extract media URLs and build download items
+    media_urls = api_client.extract_media_urls(tweet_data, includes)
+    media_filenames: List[str] = []
+    media_items: List[MediaItem] = []
+    for idx, media_url in enumerate(media_urls, start=1):
+        ext = _media_ext(media_url)
+        dest = storage.get_media_path(author_username, tweet_id, idx, ext)
+        media_filenames.append(dest.name)
+        media_items.append(MediaItem(
+            url=media_url["url"],
+            media_type=media_url["type"],
+            dest_path=dest,
+            tweet_id=tweet_id,
+        ))
+
+    post_data: Dict = {
+        "author_username": author_username,
+        "author_id": author_id,
+        "created_at": tweet_data.get("created_at", ""),
+        "text": tweet_data.get("text", ""),
+        "media_files": media_filenames,
+        "quoted_tweet_id": quoted_tweet_id,
+        "quoted_author": quoted_author_username,
+        "quoted_text": quoted_tweet_data.get("text") if quoted_tweet_data else None,
+        "quoted_created_at": quoted_tweet_data.get("created_at") if quoted_tweet_data else None,
+    }
+
+    if dry_run:
+        logger.info(
+            "DRY RUN: would process @%s/%s (%d media)",
+            author_username, tweet_id, len(media_items),
+        )
+        return 0
+
+    storage.ensure_author_directory(author_username)
+    storage.save_post_content(author_username, tweet_id, post_data)
+
+    download_stats = None
+    if media_items:
+        timeout = config["download"]["timeout_seconds"]
+        download_stats = coordinate_downloads(media_items, timeout=timeout)
+
+    if quoted_tweet_id and quoted_author_username:
+        storage.create_quoted_symlink(
+            parent_username=author_username,
+            parent_post_id=tweet_id,
+            quoted_username=quoted_author_username,
+            quoted_post_id=quoted_tweet_id,
+        )
+
+    folder_path = str(storage.get_author_folder(author_username))
+    media_count = download_stats.succeeded if download_stats else 0
+    state.mark_processed(
+        tweet_id,
+        "success",
+        [folder_path],
+        media_count,
+        author_username=author_username,
+        author_id=author_id,
+    )
+
+    if download_stats:
+        for item, result in zip(media_items, download_stats.results):
+            if result.success:
+                state.record_media_file(
+                    tweet_id,
+                    str(result.dest_path),
+                    item.media_type,
+                    result.file_size or 0,
+                )
+
+    symlinks_count = 1 if (quoted_tweet_id and quoted_author_username) else 0
+    storage.update_author_metadata(
+        author_username,
+        author_id,
+        posts_delta=1,
+        media_delta=media_count,
+        symlinks_delta=symlinks_count,
+    )
+
+    return media_count
+
+
 def setup_logging(config):
     """Set up logging based on configuration."""
     logger = Logger.setup(config)

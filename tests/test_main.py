@@ -3,11 +3,14 @@
 import os
 import sys
 from io import StringIO
-from unittest.mock import patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
 from bookmark_downloader.main import main, verify_setup
+from bookmark_downloader.api.twitter_client import TwitterClient
+from bookmark_downloader.storage.local_storage import LocalStorage
+from bookmark_downloader.storage.database import StateManager
 
 
 def _make_config_with_paths(tmp_path):
@@ -437,3 +440,159 @@ class TestFindUser:
     def test_returns_none_for_empty_includes(self):
         from bookmark_downloader.main import _find_user
         assert _find_user("111", {}) is None
+
+
+class TestProcessTweet:
+    """Tests for _process_tweet core function."""
+
+    def _make_tweet(self, tweet_id="123", author_id="456", text="Hello", refs=None):
+        t = {"id": tweet_id, "text": text, "author_id": author_id}
+        if refs:
+            t["referenced_tweets"] = refs
+        return t
+
+    def _make_includes(self, author_id="456", username="alice"):
+        return {"users": [{"id": author_id, "username": username, "name": "Alice"}]}
+
+    def test_text_only_tweet_creates_txt_and_marks_processed(self, tmp_path):
+        from bookmark_downloader.main import _process_tweet
+
+        config = _make_config_with_paths(tmp_path)
+        api_client = MagicMock(spec=TwitterClient)
+        api_client.extract_media_urls = MagicMock(return_value=[])
+
+        (tmp_path / "downloads").mkdir()
+        (tmp_path / "logs").mkdir()
+
+        storage = LocalStorage(config)
+        state = StateManager(config)
+
+        tweet = self._make_tweet()
+        includes = self._make_includes()
+
+        count = _process_tweet(tweet, includes, api_client, storage, state, config)
+
+        assert count == 0
+        txt_file = tmp_path / "downloads" / "@alice" / "123.txt"
+        assert txt_file.exists()
+        assert state.is_already_processed("123")
+
+        state.close()
+
+    def test_tweet_with_media_downloads_and_records(self, tmp_path):
+        from bookmark_downloader.main import _process_tweet
+        from bookmark_downloader.download.media_handler import DownloadStats, DownloadResult
+
+        config = _make_config_with_paths(tmp_path)
+        api_client = MagicMock(spec=TwitterClient)
+        api_client.extract_media_urls = MagicMock(return_value=[
+            {"url": "https://pbs.twimg.com/media/IMG.jpg", "type": "photo", "media_key": "k1"},
+        ])
+
+        (tmp_path / "downloads").mkdir()
+        (tmp_path / "logs").mkdir()
+
+        storage = LocalStorage(config)
+        state = StateManager(config)
+
+        dest = storage.get_media_path("alice", "123", 1, "jpg")
+        mock_result = DownloadResult(
+            url="https://pbs.twimg.com/media/IMG.jpg",
+            dest_path=dest,
+            success=True,
+            file_size=5000,
+            error=None,
+            attempts=1,
+        )
+        mock_stats = DownloadStats(
+            tweet_id="123", total=1, succeeded=1, failed=0, results=[mock_result]
+        )
+
+        with patch("bookmark_downloader.main.coordinate_downloads", return_value=mock_stats):
+            count = _process_tweet(
+                self._make_tweet(), includes=self._make_includes(),
+                api_client=api_client, storage=storage, state=state, config=config
+            )
+
+        assert count == 1
+        assert state.is_already_processed("123")
+        stats = state.get_processing_stats()
+        assert stats.total_media_downloaded == 1
+
+        state.close()
+
+    def test_dry_run_skips_writes(self, tmp_path):
+        from bookmark_downloader.main import _process_tweet
+
+        config = _make_config_with_paths(tmp_path)
+        api_client = MagicMock(spec=TwitterClient)
+        api_client.extract_media_urls = MagicMock(return_value=[])
+
+        storage = MagicMock(spec=LocalStorage)
+        state = MagicMock(spec=StateManager)
+
+        count = _process_tweet(
+            self._make_tweet(), includes=self._make_includes(),
+            api_client=api_client, storage=storage, state=state,
+            config=config, dry_run=True
+        )
+
+        assert count == 0
+        storage.save_post_content.assert_not_called()
+        state.mark_processed.assert_not_called()
+
+    def test_quoted_tweet_in_includes_creates_symlink(self, tmp_path):
+        from bookmark_downloader.main import _process_tweet
+
+        config = _make_config_with_paths(tmp_path)
+        api_client = MagicMock(spec=TwitterClient)
+        api_client.extract_media_urls = MagicMock(return_value=[])
+
+        (tmp_path / "downloads").mkdir()
+        (tmp_path / "logs").mkdir()
+
+        storage = LocalStorage(config)
+        state = StateManager(config)
+
+        refs = [{"type": "quoted", "id": "999"}]
+        tweet = self._make_tweet(refs=refs)
+        quoted = {"id": "999", "text": "quoted", "author_id": "789"}
+        includes = {
+            "users": [
+                {"id": "456", "username": "alice", "name": "Alice"},
+                {"id": "789", "username": "bob", "name": "Bob"},
+            ],
+            "tweets": [quoted],
+        }
+
+        with patch("bookmark_downloader.main.coordinate_downloads") as mock_dl:
+            mock_dl.return_value = MagicMock(succeeded=0, failed=0, results=[])
+            _process_tweet(tweet, includes, api_client, storage, state, config)
+
+        link = tmp_path / "downloads" / "@alice" / "123_quoted_1.link"
+        assert link.exists() or link.is_symlink()
+
+        state.close()
+
+    def test_unknown_author_uses_author_id_as_username(self, tmp_path):
+        from bookmark_downloader.main import _process_tweet
+
+        config = _make_config_with_paths(tmp_path)
+        api_client = MagicMock(spec=TwitterClient)
+        api_client.extract_media_urls = MagicMock(return_value=[])
+
+        (tmp_path / "downloads").mkdir()
+        (tmp_path / "logs").mkdir()
+
+        storage = LocalStorage(config)
+        state = StateManager(config)
+
+        tweet = self._make_tweet(author_id="456")
+        includes = {"users": []}  # no user data
+
+        _process_tweet(tweet, includes, api_client, storage, state, config)
+
+        folder = tmp_path / "downloads" / "@456"
+        assert folder.exists()
+
+        state.close()
