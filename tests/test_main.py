@@ -785,3 +785,105 @@ class TestDownloadBookmarks:
 
         call_kwargs = mock_pt.call_args[1]
         assert call_kwargs.get("dry_run") is True
+
+
+class TestReprocessTweet:
+    def test_reprocess_with_context_format(self, tmp_path):
+        """_reprocess_tweet handles {"tweet": ..., "includes": ...} format."""
+        from bookmark_downloader.main import _reprocess_tweet
+
+        config = _make_config_with_paths(tmp_path)
+        api_client = MagicMock(spec=TwitterClient)
+        storage = MagicMock(spec=LocalStorage)
+        state = MagicMock(spec=StateManager)
+
+        stored = {
+            "tweet": {"id": "99", "text": "hi", "author_id": "u1"},
+            "includes": {"users": [{"id": "u1", "username": "alice", "name": "Alice"}]},
+        }
+
+        with patch("bookmark_downloader.main._process_tweet") as mock_pt:
+            _reprocess_tweet(stored, api_client, storage, state, config)
+
+        mock_pt.assert_called_once()
+        call_args = mock_pt.call_args[0]
+        assert call_args[0]["id"] == "99"   # tweet_data
+        assert "users" in call_args[1]       # includes
+
+    def test_reprocess_with_plain_tweet_format(self, tmp_path):
+        """_reprocess_tweet handles plain TweetData format (legacy quarantine)."""
+        from bookmark_downloader.main import _reprocess_tweet
+
+        config = _make_config_with_paths(tmp_path)
+        api_client = MagicMock(spec=TwitterClient)
+        storage = MagicMock(spec=LocalStorage)
+        state = MagicMock(spec=StateManager)
+
+        stored = {"id": "99", "text": "hi", "author_id": "u1"}
+
+        with patch("bookmark_downloader.main._process_tweet") as mock_pt:
+            _reprocess_tweet(stored, api_client, storage, state, config)
+
+        mock_pt.assert_called_once()
+        call_args = mock_pt.call_args[0]
+        assert call_args[0]["id"] == "99"   # tweet_data
+        assert call_args[1] == {}            # empty includes fallback
+
+
+class TestRetryQuarantine:
+    def test_retry_quarantine_succeeds_and_removes_from_quarantine(self, tmp_path):
+        from bookmark_downloader.main import retry_quarantine
+
+        config = _make_config_with_paths(tmp_path)
+
+        with patch("bookmark_downloader.main.QuarantineManager") as MockQM, \
+             patch("bookmark_downloader.main.StateManager") as MockSM, \
+             patch("bookmark_downloader.main.TwitterClient"), \
+             patch("bookmark_downloader.main.LocalStorage"), \
+             patch("bookmark_downloader.main._reprocess_tweet"):
+
+            sm_inst = MockSM.return_value
+            sm_inst.get_quarantined_bookmarks.return_value = [
+                {"tweet_id": "42", "retry_count": 1}
+            ]
+            qm_inst = MockQM.return_value
+            qm_inst.get_tweet_data.return_value = {
+                "tweet": {"id": "42", "text": "x", "author_id": "u1"},
+                "includes": {},
+            }
+            qm_inst.generate_report.return_value = tmp_path / "report.txt"
+
+            result = retry_quarantine(config)
+
+        assert result is True
+        qm_inst.remove_item.assert_called_once_with("42")
+        sm_inst.mark_processed.assert_called_once()
+
+    def test_retry_quarantine_re_quarantines_on_failure(self, tmp_path):
+        from bookmark_downloader.main import retry_quarantine
+
+        config = _make_config_with_paths(tmp_path)
+
+        with patch("bookmark_downloader.main.QuarantineManager") as MockQM, \
+             patch("bookmark_downloader.main.StateManager") as MockSM, \
+             patch("bookmark_downloader.main.TwitterClient") as MockTC, \
+             patch("bookmark_downloader.main.LocalStorage"), \
+             patch("bookmark_downloader.main._reprocess_tweet", side_effect=ValueError("fail")):
+
+            sm_inst = MockSM.return_value
+            sm_inst.get_quarantined_bookmarks.return_value = [
+                {"tweet_id": "42", "retry_count": 1}
+            ]
+            qm_inst = MockQM.return_value
+            qm_inst.get_tweet_data.return_value = {
+                "tweet": {"id": "42", "text": "x", "author_id": "u1"},
+                "includes": {},
+            }
+            tc_inst = MockTC.return_value
+            tc_inst.get_tweet_details.side_effect = ValueError("also fail")
+            qm_inst.generate_report.return_value = tmp_path / "report.txt"
+
+            result = retry_quarantine(config)
+
+        assert result is True
+        sm_inst.mark_quarantined.assert_called_once()

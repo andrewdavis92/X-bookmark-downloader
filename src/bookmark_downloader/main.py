@@ -394,9 +394,21 @@ def show_stats(config) -> bool:
         return False
 
 
-def _reprocess_tweet(tweet_data: Dict) -> None:
-    """Process a single tweet's data for download. Implemented in Phase 8."""
-    raise NotImplementedError("reprocess logic not yet implemented; see Phase 8")
+def _reprocess_tweet(
+    stored_data: Dict,
+    api_client: TwitterClient,
+    storage: LocalStorage,
+    state: StateManager,
+    config: Config,
+) -> None:
+    """Reprocess a quarantined tweet. Handles both context format and plain TweetData."""
+    if "tweet" in stored_data and "includes" in stored_data:
+        tweet_data = stored_data["tweet"]
+        includes = stored_data["includes"]
+    else:
+        tweet_data = stored_data
+        includes = {}
+    _process_tweet(tweet_data, includes, api_client, storage, state, config)
 
 
 def retry_quarantine(config, limit: Optional[int] = None) -> bool:
@@ -415,6 +427,7 @@ def retry_quarantine(config, limit: Optional[int] = None) -> bool:
         quarantine_manager = QuarantineManager(config)
         state_manager = StateManager(config)
         bookmark_client = TwitterClient(config)
+        storage = LocalStorage(config)
 
         quarantined = state_manager.get_quarantined_bookmarks(limit if limit is not None else 100)
         logger.info("Found %d quarantined items to retry", len(quarantined))
@@ -430,7 +443,7 @@ def retry_quarantine(config, limit: Optional[int] = None) -> bool:
             stored_data = quarantine_manager.get_tweet_data(tweet_id)
             if stored_data is not None:
                 try:
-                    _reprocess_tweet(stored_data)
+                    _reprocess_tweet(stored_data, bookmark_client, storage, state_manager, config)
                     tweet_data = stored_data
                 except Exception as e:
                     exc = e
@@ -440,9 +453,11 @@ def retry_quarantine(config, limit: Optional[int] = None) -> bool:
             if stored_data is None or exc is not None:
                 try:
                     fresh_data = bookmark_client.get_tweet_details(tweet_id)
+                    if fresh_data is None:
+                        raise ValueError(f"Tweet {tweet_id} not found (deleted)")
                     tweet_data = fresh_data
                     exc = None
-                    _reprocess_tweet(fresh_data)
+                    _reprocess_tweet(fresh_data, bookmark_client, storage, state_manager, config)
                 except Exception as e:
                     exc = e
 
