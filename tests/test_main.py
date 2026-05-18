@@ -394,3 +394,46 @@ class TestClearCache:
             result = clear_cache(config, older_than_days=90)
 
         assert result is False
+
+
+class TestMediaExt:
+    def test_photo_jpg(self):
+        from bookmark_downloader.main import _media_ext
+        url = {"url": "https://pbs.twimg.com/media/ABC.jpg?format=jpg&name=large", "type": "photo"}
+        assert _media_ext(url) == "jpg"
+
+    def test_photo_png(self):
+        from bookmark_downloader.main import _media_ext
+        url = {"url": "https://pbs.twimg.com/media/XYZ.png", "type": "photo"}
+        assert _media_ext(url) == "png"
+
+    def test_video_mp4(self):
+        from bookmark_downloader.main import _media_ext
+        url = {"url": "https://video.twimg.com/ext_tw_video/123/pu/vid/360x360/abc.mp4", "type": "video"}
+        assert _media_ext(url) == "mp4"
+
+    def test_unknown_extension_returns_bin(self):
+        from bookmark_downloader.main import _media_ext
+        url = {"url": "https://example.com/file", "type": "photo"}
+        assert _media_ext(url) == "bin"
+
+
+class TestFindUser:
+    def test_finds_matching_user(self):
+        from bookmark_downloader.main import _find_user
+        includes = {"users": [
+            {"id": "111", "username": "alice", "name": "Alice"},
+            {"id": "222", "username": "bob", "name": "Bob"},
+        ]}
+        result = _find_user("111", includes)
+        assert result is not None
+        assert result["username"] == "alice"
+
+    def test_returns_none_when_not_found(self):
+        from bookmark_downloader.main import _find_user
+        includes = {"users": [{"id": "111", "username": "alice", "name": "Alice"}]}
+        assert _find_user("999", includes) is None
+
+    def test_returns_none_for_empty_includes(self):
+        from bookmark_downloader.main import _find_user
+        assert _find_user("111", {}) is None

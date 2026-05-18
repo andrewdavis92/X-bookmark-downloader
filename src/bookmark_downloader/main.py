@@ -4,15 +4,54 @@ Downloads media from X (Twitter) bookmarks with intelligent organization.
 """
 
 import argparse
+import signal
 import sys
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
-from bookmark_downloader.api.twitter_client import TwitterClient
-from bookmark_downloader.config import get_config, reload_config
+from bookmark_downloader.api.twitter_client import (
+    IncludesData,
+    RateLimitError,
+    TweetData,
+    TwitterClient,
+)
+from bookmark_downloader.config import Config, get_config, reload_config
+from bookmark_downloader.download.media_handler import MediaItem, coordinate_downloads
 from bookmark_downloader.storage.database import StateManager
-from bookmark_downloader.storage.quarantine import QuarantineManager, classify_error
+from bookmark_downloader.storage.local_storage import LocalStorage
+from bookmark_downloader.storage.quarantine import (
+    ErrorCategory,
+    QuarantineManager,
+    classify_error,
+)
 from bookmark_downloader.utils.logger import Logger, get_logger
+
+
+_shutdown_requested: bool = False
+
+
+def _handle_shutdown_signal(signum: int, frame: Any) -> None:
+    global _shutdown_requested
+    _shutdown_requested = True
+    get_logger(__name__).info(
+        "Shutdown signal %d received, stopping after current tweet...", signum
+    )
+
+
+def _media_ext(media_url: Dict[str, str]) -> str:
+    """Return the file extension (without dot) for a media URL dict."""
+    parsed = urlparse(media_url["url"])
+    suffix = Path(parsed.path).suffix
+    return suffix.lstrip(".") if suffix else "bin"
+
+
+def _find_user(user_id: str, includes: Dict) -> Optional[Dict]:
+    """Return the user dict matching user_id from includes, or None."""
+    for user in (includes.get("users") or []):
+        if user.get("id") == user_id:
+            return user
+    return None
 
 
 def setup_logging(config):
